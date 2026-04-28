@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+coverage/
+
+# TypeScript
+*.tsbuildinfo
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Local databases
+apps/data/*.sqlite
+apps/data/*.sqlite-*
+apps/api/data/*.sqlite
+apps/api/data/*.sqlite-*
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Caches
+.npm/
+.eslintcache
+.vite/
+node_modules/.vite/
+node_modules/.vite-temp/
+
+# Test and browser tooling output
+.vitest/
+.playwright/
+test-results/
+playwright-report/
+
+# Editors
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

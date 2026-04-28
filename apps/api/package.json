@@ -1,0 +1,24 @@
+{
+  "name": "@surveyor/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file=../../.env dist/server.js",
+    "verify:persistence": "npm run build && node dist/scripts/verifyPersistence.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@surveyor/shared": "*",
+    "better-sqlite3": "^11.7.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "playwright": "^1.49.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/express": "^4.17.21",
+    "vitest": "^4.1.4"
+  }
+}

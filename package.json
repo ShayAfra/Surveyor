@@ -1,0 +1,17 @@
+{
+  "name": "surveyor",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "build:web": "npm run build --workspace=apps/web",
+    "build:all": "npm run build && npm run build:web",
+    "setup:playwright": "npx playwright install chromium"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
