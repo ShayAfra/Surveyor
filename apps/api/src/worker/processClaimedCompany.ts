@@ -6,6 +6,7 @@
 import type { RoleSpec } from "@surveyor/shared";
 import { AtsType, CompanyStatus } from "@surveyor/shared";
 import { db } from "../db/db.js";
+import { serializeErrorForTrace } from "../lib/errorTrace.js";
 import { writeTraceEvent } from "../lib/trace.js";
 import { discoverCareersUrl } from "../lib/discovery.js";
 import { detectPlatform } from "../lib/platform.js";
@@ -14,6 +15,7 @@ import {
   extractJobs,
   initialExtractorForAts,
   shouldAttemptPlaywrightFallback,
+  type ExtractJobsResult,
 } from "../lib/extraction.js";
 import { matchJobs } from "../lib/matching.js";
 import {
@@ -23,14 +25,14 @@ import {
 } from "../lib/finalizeCompany.js";
 import { tryCompleteRun } from "./tryCompleteRun.js";
 
-function deriveCompletionReason(extraction: { completed: boolean; failure_code?: string; jobs: { length: number } }): string {
+function deriveCompletionReason(extraction: { completed: boolean; failure_code?: string; jobs?: { length: number } }): string {
   if (extraction.completed) {
     return "CONFIDENT_SURFACE";
   }
   if (extraction.failure_code) {
     return extraction.failure_code;
   }
-  return extraction.jobs.length === 0 ? "NO_LISTINGS_PARSED" : "NOT_CONFIDENT_SURFACE";
+  return (extraction.jobs?.length ?? 0) === 0 ? "NO_LISTINGS_PARSED" : "NOT_CONFIDENT_SURFACE";
 }
 
 const FETCH_TIMEOUT_MS = 5000;
@@ -120,6 +122,96 @@ function finalizeAndCompleteRun(input: FinalizePersistInput): void {
   const ok = persistFinalizeCompany(input);
   if (ok) {
     tryCompleteRun(input.run_id);
+  }
+}
+
+async function runTracedExtractorAttempt(args: {
+  run_id: string;
+  run_company_id: string;
+  url: string;
+  ats_type: AtsType;
+  extractor_used: string;
+  attempt_number: number;
+}): Promise<ExtractJobsResult> {
+  const {
+    run_id,
+    run_company_id,
+    url,
+    ats_type,
+    extractor_used,
+    attempt_number,
+  } = args;
+  const startMs = Date.now();
+
+  writeTraceEvent({
+    run_id,
+    run_company_id,
+    event_type: "extractor_attempt_started",
+    message: "extractor attempt started",
+    payload_json: JSON.stringify({
+      extractor_used,
+      ats_type,
+      url,
+      attempt_number,
+    }),
+    created_at: Date.now(),
+  });
+
+  try {
+    const extraction = await extractJobs(url, ats_type, extractor_used, {
+      onPlaywrightStageFailed: (diagnostic) => {
+        writeTraceEvent({
+          run_id,
+          run_company_id,
+          event_type: "playwright_stage_failed",
+          message: "playwright stage failed",
+          payload_json: JSON.stringify(diagnostic),
+          created_at: Date.now(),
+        });
+      },
+    });
+
+    writeTraceEvent({
+      run_id,
+      run_company_id,
+      event_type: "extractor_attempt_finished",
+      message: "extractor attempt finished",
+      payload_json: JSON.stringify({
+        extractor_used,
+        ats_type,
+        url,
+        attempt_number,
+        completed: extraction.completed,
+        jobs_count: extraction.jobs.length,
+        listings_scanned: extraction.listings_scanned,
+        pages_visited: extraction.pages_visited,
+        failure_code: extraction.failure_code ?? null,
+        failure_reason: extraction.failure_reason ?? null,
+        duration_ms: Date.now() - startMs,
+      }),
+      created_at: Date.now(),
+    });
+
+    return extraction;
+  } catch (error) {
+    const serialized = serializeErrorForTrace(error);
+    writeTraceEvent({
+      run_id,
+      run_company_id,
+      event_type: "extractor_attempt_exception",
+      message: "extractor attempt threw exception",
+      payload_json: JSON.stringify({
+        extractor_used,
+        ats_type,
+        url,
+        attempt_number,
+        stage: null,
+        ...serialized,
+        duration_ms: Date.now() - startMs,
+      }),
+      created_at: Date.now(),
+    });
+    throw error;
   }
 }
 
@@ -428,11 +520,14 @@ export async function processClaimedCompany(args: {
     return;
   }
 
-  let extraction = await extractJobs(
-    extractionStartUrl,
-    detectedPlatform,
-    extractorName
-  );
+  let extraction = await runTracedExtractorAttempt({
+    run_id,
+    run_company_id,
+    url: extractionStartUrl,
+    ats_type: detectedPlatform,
+    extractor_used: extractorName,
+    attempt_number: 1,
+  });
 
   let finalExtractorUsed = extractorName;
 
@@ -470,11 +565,14 @@ export async function processClaimedCompany(args: {
       return;
     }
 
-    extraction = await extractJobs(
-      extractionStartUrl,
-      detectedPlatform,
-      EXTRACTOR_USED.PLAYWRIGHT
-    );
+    extraction = await runTracedExtractorAttempt({
+      run_id,
+      run_company_id,
+      url: extractionStartUrl,
+      ats_type: detectedPlatform,
+      extractor_used: EXTRACTOR_USED.PLAYWRIGHT,
+      attempt_number: 2,
+    });
     finalExtractorUsed = EXTRACTOR_USED.PLAYWRIGHT;
   }
 

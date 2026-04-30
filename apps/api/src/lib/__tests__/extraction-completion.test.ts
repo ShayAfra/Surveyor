@@ -8,8 +8,9 @@
  *   7.4 — computeFinalStatus regression tests
  */
 
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
+  extractJobs,
   isConfidentListingsSurface,
   EXTRACTOR_USED,
   MIN_CONFIDENT_LISTINGS,
@@ -32,8 +33,145 @@ function makeJobs(count: number): Job[] {
   return Array.from({ length: count }, (_, i) => makeJob(i + 1));
 }
 
+function makeGreenhouseJobs(count: number): Job[] {
+  return Array.from({ length: count }, (_, i) => ({
+    title: "Engineer",
+    location: "Remote",
+    url: `https://job-boards.greenhouse.io/reddit/jobs/${1000 + i}`,
+  }));
+}
+
 const NO_SHELL_HTML = "<html><body>hello</body></html>";
 const GREENHOUSE_SHELL_HTML = '<div class="greenhouse-job-board"></div>';
+
+function mockHtmlExtraction(html: string): void {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue({
+    ok: true,
+    status: 200,
+    text: async () => html,
+  } as Response);
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+// ---------------------------------------------------------------------------
+// Anchor parsing
+// ---------------------------------------------------------------------------
+describe("extractJobs anchor parsing", () => {
+  it("parses direct text anchors", async () => {
+    mockHtmlExtraction('<a href="https://x/jobs/1">Software Engineer</a>');
+
+    const result = await extractJobs(
+      "https://x/jobs",
+      AtsType.UNKNOWN,
+      EXTRACTOR_USED.GENERIC_HTTP
+    );
+
+    expect(result.jobs).toEqual([
+      { title: "Software Engineer", location: null, url: "https://x/jobs/1" },
+    ]);
+  });
+
+  it("parses nested anchors", async () => {
+    mockHtmlExtraction('<a href="https://x/jobs/1"><div>Software Engineer</div></a>');
+
+    const result = await extractJobs(
+      "https://x/jobs",
+      AtsType.UNKNOWN,
+      EXTRACTOR_USED.GENERIC_HTTP
+    );
+
+    expect(result.jobs).toEqual([
+      { title: "Software Engineer", location: null, url: "https://x/jobs/1" },
+    ]);
+  });
+
+  it("uses nested job-title text as title and extracts job-location separately", async () => {
+    mockHtmlExtraction(
+      '<a href="https://x/jobs/1"><div class="job-title">Software Engineer</div><div class="job-location">Remote</div></a>'
+    );
+
+    const result = await extractJobs(
+      "https://x/jobs",
+      AtsType.UNKNOWN,
+      EXTRACTOR_USED.GENERIC_HTTP
+    );
+
+    expect(result.jobs).toEqual([
+      { title: "Software Engineer", location: "Remote", url: "https://x/jobs/1" },
+    ]);
+  });
+
+  it("rejects nav links", async () => {
+    mockHtmlExtraction('<a href="/careers"><div>Careers</div></a>');
+
+    const result = await extractJobs(
+      "https://x/jobs",
+      AtsType.UNKNOWN,
+      EXTRACTOR_USED.GENERIC_HTTP
+    );
+
+    expect(result.jobs).toEqual([]);
+  });
+
+  it("rejects non-job nested anchors", async () => {
+    mockHtmlExtraction('<a href="/about"><div>About Us</div></a>');
+
+    const result = await extractJobs(
+      "https://x/jobs",
+      AtsType.UNKNOWN,
+      EXTRACTOR_USED.GENERIC_HTTP
+    );
+
+    expect(result.jobs).toEqual([]);
+  });
+
+  it("dedupes duplicate URLs", async () => {
+    mockHtmlExtraction(`
+      <a href="https://x/jobs/1"><div>Software Engineer</div></a>
+      <a href="https://x/jobs/1"><div>Software Engineer</div></a>
+    `);
+
+    const result = await extractJobs(
+      "https://x/jobs",
+      AtsType.UNKNOWN,
+      EXTRACTOR_USED.GENERIC_HTTP
+    );
+
+    expect(result.jobs).toEqual([
+      { title: "Software Engineer", location: null, url: "https://x/jobs/1" },
+    ]);
+  });
+
+  it("completes GREENHOUSE extraction from official careers page when parsed job URLs enumerate Greenhouse details", async () => {
+    mockHtmlExtraction(`
+      <a href="https://job-boards.greenhouse.io/reddit/jobs/1001">
+        <div class="job-title">Software Engineer</div>
+        <div class="job-location">Remote - United States</div>
+      </a>
+      <a href="https://job-boards.greenhouse.io/reddit/jobs/1002">
+        <div class="job-title">Backend Engineer</div>
+        <div class="job-location">Remote - United States</div>
+      </a>
+      <a href="https://job-boards.greenhouse.io/reddit/jobs/1003">
+        <div class="job-title">Frontend Engineer</div>
+        <div class="job-location">Remote - United States</div>
+      </a>
+    `);
+
+    const result = await extractJobs(
+      "https://redditinc.com/careers",
+      AtsType.GREENHOUSE,
+      EXTRACTOR_USED.GREENHOUSE
+    );
+
+    expect(result.completed).toBe(true);
+    expect(result.jobs).toHaveLength(MIN_CONFIDENT_LISTINGS);
+    expect(result.listings_scanned).toBe(MIN_CONFIDENT_LISTINGS);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // 7.1 — isConfidentListingsSurface
@@ -95,6 +233,39 @@ describe("isConfidentListingsSurface", () => {
         EXTRACTOR_USED.GREENHOUSE,
       ),
     ).toBe(true);
+  });
+
+  it("returns true for GREENHOUSE extractor + non-ATS source URL + minimum unique Greenhouse job detail URLs", () => {
+    expect(
+      isConfidentListingsSurface(
+        NO_SHELL_HTML,
+        "https://redditinc.com/careers",
+        makeGreenhouseJobs(MIN_CONFIDENT_LISTINGS),
+        EXTRACTOR_USED.GREENHOUSE,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false for GREENHOUSE extractor + non-ATS source URL + fewer than minimum Greenhouse job detail URLs", () => {
+    expect(
+      isConfidentListingsSurface(
+        NO_SHELL_HTML,
+        "https://redditinc.com/careers",
+        makeGreenhouseJobs(MIN_CONFIDENT_LISTINGS - 1),
+        EXTRACTOR_USED.GREENHOUSE,
+      ),
+    ).toBe(false);
+  });
+
+  it("returns false for GREENHOUSE extractor + non-ATS source URL + many non-ATS job-like URLs", () => {
+    expect(
+      isConfidentListingsSurface(
+        NO_SHELL_HTML,
+        "https://redditinc.com/careers",
+        makeJobs(10),
+        EXTRACTOR_USED.GREENHOUSE,
+      ),
+    ).toBe(false);
   });
 
   it("returns false for named ATS extractor + no shell HTML + non-ATS URL + 5 jobs", () => {

@@ -5,6 +5,7 @@
 
 import type { AtsType } from "@surveyor/shared";
 import { AtsType as Ats } from "@surveyor/shared";
+import { serializeErrorForTrace } from "./errorTrace.js";
 
 export const MAX_LISTINGS_PER_COMPANY = 200;
 export const MAX_PAGES_PER_COMPANY = 20;
@@ -41,19 +42,83 @@ export const EXTRACTOR_USED = {
 export type ExtractorUsedName =
   (typeof EXTRACTOR_USED)[keyof typeof EXTRACTOR_USED];
 
-function jobLinkRegexForHtml(html: string): RegExpMatchArray[] {
-  const matches: RegExpMatchArray[] = [];
+export type PlaywrightStageName =
+  | "import_playwright"
+  | "browser_launch"
+  | "new_context"
+  | "new_page"
+  | "goto"
+  | "wait_for_content"
+  | "parse_dom"
+  | "browser_close"
+  | "unknown";
+
+export type PlaywrightStageFailedDiagnostic = {
+  stage: PlaywrightStageName;
+  url: string;
+  error_name: string | null;
+  error_message: string | null;
+  error_stack_preview: string | null;
+  listings_scanned: number;
+  pages_visited: number;
+  duration_ms: number;
+};
+
+export type ExtractionDiagnostics = {
+  onPlaywrightStageFailed?: (diagnostic: PlaywrightStageFailedDiagnostic) => void;
+};
+
+type JobLinkCandidate = {
+  href: string;
+  title: string;
+  location: string | null;
+};
+
+function decodeHtmlEntities(text: string): string {
+  return text
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#(\d+);/g, (_match, code: string) =>
+      String.fromCharCode(Number(code))
+    );
+}
+
+function stripHtmlToText(html: string): string {
+  return decodeHtmlEntities(html.replace(/<[^>]*>/g, " "))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractTextForClass(innerHtml: string, className: string): string | null {
+  const re = new RegExp(
+    `<[^>]*\\bclass\\s*=\\s*["'][^"']*\\b${className}\\b[^"']*["'][^>]*>([\\s\\S]*?)<\\/[^>]+>`,
+    "i"
+  );
+  const match = re.exec(innerHtml);
+  if (!match) return null;
+  const text = stripHtmlToText(match[1]!);
+  return text.length > 0 ? text : null;
+}
+
+function jobLinkRegexForHtml(html: string): JobLinkCandidate[] {
+  const matches: JobLinkCandidate[] = [];
   const re =
-    /<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([^<]{1,200})<\/a>/gi;
+    /<a\b[^>]*\bhref\s*=\s*(["'])([^"']+)\1[^>]*>([\s\S]*?)<\/a>/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) {
-    const href = m[1]!.replace(/&amp;/g, "&");
-    const text = m[2]!.replace(/\s+/g, " ").trim();
+    const href = decodeHtmlEntities(m[2]!);
+    const innerHtml = m[3]!;
+    const title = extractTextForClass(innerHtml, "job-title") ?? stripHtmlToText(innerHtml);
+    const location = extractTextForClass(innerHtml, "job-location");
     if (
       /job|career|opening|position|role/i.test(href) ||
-      /job|career|opening|position|role/i.test(text)
+      /job|career|opening|position|role/i.test(title)
     ) {
-      matches.push(m);
+      matches.push({ href, title, location });
     }
   }
   return matches;
@@ -185,9 +250,8 @@ function parseJobsFromHtml(html: string, baseUrl: string): Job[] {
     return jobs;
   }
 
-  for (const m of jobLinkRegexForHtml(html)) {
-    const href = m[1]!.replace(/&amp;/g, "&");
-    const title = m[2]!.replace(/\s+/g, " ").trim();
+  for (const link of jobLinkRegexForHtml(html)) {
+    const { href, title, location } = link;
     let abs: string;
     try {
       abs = new URL(href, base).href;
@@ -202,7 +266,7 @@ function parseJobsFromHtml(html: string, baseUrl: string): Job[] {
       continue;
     }
     seen.add(abs);
-    jobs.push({ title, location: null, url: abs });
+    jobs.push({ title, location, url: abs });
   }
   return jobs;
 }
@@ -282,6 +346,68 @@ function htmlHasAtsListingShellForExtractor(
   }
 }
 
+function pathHasDetailAfterSegment(pathname: string, segmentNames: string[]): boolean {
+  const segments = pathname.toLowerCase().split("/").filter(Boolean);
+  for (const segmentName of segmentNames) {
+    const index = segments.indexOf(segmentName);
+    if (index >= 0 && segments.length > index + 1) {
+      const detailSegment = segments[index + 1]!;
+      if (!CONTAINER_PATH_TERMINALS.has(detailSegment)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function parsedJobUrlMatchesExtractor(url: string, extractor_used: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  switch (extractor_used) {
+    case EXTRACTOR_USED.GREENHOUSE:
+      return (
+        hostIsOfficial(host, "greenhouse.io") &&
+        pathHasDetailAfterSegment(parsed.pathname, ["jobs"])
+      );
+    case EXTRACTOR_USED.LEVER:
+      return (
+        hostIsOfficial(host, "lever.co") &&
+        parsed.pathname.split("/").filter(Boolean).length >= 2
+      );
+    case EXTRACTOR_USED.ASHBY:
+      return (
+        hostIsOfficial(host, "ashbyhq.com") &&
+        parsed.pathname.split("/").filter(Boolean).length >= 2
+      );
+    case EXTRACTOR_USED.SMARTRECRUITERS:
+      return (
+        hostIsOfficial(host, "smartrecruiters.com") &&
+        parsed.pathname.split("/").filter(Boolean).length >= 2
+      );
+    default:
+      return false;
+  }
+}
+
+function hasConfidentParsedAtsJobUrls(
+  jobs: Job[],
+  extractor_used: string
+): boolean {
+  const uniqueMatchingUrls = new Set<string>();
+  for (const job of jobs) {
+    if (parsedJobUrlMatchesExtractor(job.url, extractor_used)) {
+      uniqueMatchingUrls.add(job.url);
+    }
+  }
+  return uniqueMatchingUrls.size >= MIN_CONFIDENT_LISTINGS;
+}
+
 function completionUsesAtsThresholds(
   extractor_used: string,
   url: string
@@ -319,7 +445,10 @@ export function isConfidentListingsSurface(
       return true;
     }
     if (isNamedAtsExtractor(extractor_used)) {
-      return htmlHasAtsListingShellForExtractor(html, extractor_used);
+      return (
+        htmlHasAtsListingShellForExtractor(html, extractor_used) ||
+        hasConfidentParsedAtsJobUrls(jobs, extractor_used)
+      );
     }
     return false;
   }
@@ -384,17 +513,30 @@ export function shouldAttemptPlaywrightFallback(
   return conditionA || conditionB;
 }
 
-async function extractJobsWithPlaywright(url: string): Promise<ExtractJobsResult> {
+async function extractJobsWithPlaywright(
+  url: string,
+  diagnostics?: ExtractionDiagnostics
+): Promise<ExtractJobsResult> {
   const startMs = Date.now();
+  let stage: PlaywrightStageName = "import_playwright";
+  let listings_scanned = 0;
+  let pages_visited = 0;
   try {
+    stage = "import_playwright";
     const { chromium } = await import("playwright");
+    stage = "browser_launch";
     const browser = await chromium.launch({ headless: true });
     try {
-      const page = await browser.newPage();
+      stage = "new_context";
+      const context = await browser.newContext();
+      stage = "new_page";
+      const page = await context.newPage();
+      stage = "goto";
       const response = await page.goto(url, {
         waitUntil: "domcontentloaded",
         timeout: MAX_TIME_PER_COMPANY_MS,
       });
+      pages_visited = 1;
 
       // Step 8.2: detect blocking via HTTP status code from Playwright response.
       const status = response?.status() ?? null;
@@ -409,6 +551,7 @@ async function extractJobsWithPlaywright(url: string): Promise<ExtractJobsResult
         };
       }
 
+      stage = "wait_for_content";
       const html = await page.content();
 
       // Step 8.2: detect blocking via page content (CAPTCHA, access denied, auth walls).
@@ -423,9 +566,9 @@ async function extractJobsWithPlaywright(url: string): Promise<ExtractJobsResult
         };
       }
 
+      stage = "parse_dom";
       const jobs = parseJobsFromHtml(html, url);
-      const listings_scanned = jobs.length;
-      const pages_visited = 1;
+      listings_scanned = jobs.length;
 
       if (
         pages_visited >= MAX_PAGES_PER_COMPANY ||
@@ -465,9 +608,19 @@ async function extractJobsWithPlaywright(url: string): Promise<ExtractJobsResult
         pages_visited,
       };
     } finally {
+      stage = "browser_close";
       await browser.close();
     }
-  } catch {
+  } catch (error) {
+    const serialized = serializeErrorForTrace(error);
+    diagnostics?.onPlaywrightStageFailed?.({
+      stage: stage ?? "unknown",
+      url,
+      ...serialized,
+      listings_scanned,
+      pages_visited,
+      duration_ms: Date.now() - startMs,
+    });
     return {
       jobs: [],
       completed: false,
@@ -603,10 +756,11 @@ async function extractJobsHttp(
 export async function extractJobs(
   url: string,
   _platform: AtsType,
-  extractor_used: string
+  extractor_used: string,
+  diagnostics?: ExtractionDiagnostics
 ): Promise<ExtractJobsResult> {
   if (extractor_used === EXTRACTOR_USED.PLAYWRIGHT) {
-    return extractJobsWithPlaywright(url);
+    return extractJobsWithPlaywright(url, diagnostics);
   }
   return extractJobsHttp(url, extractor_used);
 }
