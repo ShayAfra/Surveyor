@@ -407,15 +407,6 @@ describe("completion_reason derivation (documented via extraction result shapes)
     // → deriveCompletionReason returns "INSUFFICIENT_LISTINGS"
   });
 
-  it("completed=false with failure_code=BLOCKED → completion_reason would be BLOCKED", () => {
-    // Existing failure path: BLOCKED is set before the confidence check.
-    // deriveCompletionReason maps failure_code → "BLOCKED".
-    // Extraction result shape: { completed: false, failure_code: "BLOCKED", jobs: [] }
-    // → deriveCompletionReason returns "BLOCKED"
-    // Verified indirectly: BLOCKED results always have completed=false and failure_code set.
-    expect(true).toBe(true); // Shape documented above
-  });
-
   it("completed=false, no failure_code, jobs=[] → completion_reason would be NO_LISTINGS_PARSED", () => {
     // When extraction returns zero jobs and no failure_code (defensive fallback),
     // deriveCompletionReason returns "NO_LISTINGS_PARSED".
@@ -465,5 +456,167 @@ describe("computeFinalStatus regression", () => {
       resolutionMethod: "DIRECT_VERIFIED",
     });
     expect(result.computed_status).toBe("MATCHES_FOUND");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P0: weak and null resolution enforcement (C5.1 / R5.2 / Step 8.4)
+// ---------------------------------------------------------------------------
+
+describe("computeFinalStatus — weak and null resolution enforcement", () => {
+  // When extraction did not complete, Step 8.4 catches the violation before C5.1,
+  // so completed=false + any resolution method must always produce UNVERIFIED without throwing.
+
+  it("completed=false + INDIRECT → UNVERIFIED (no throw)", () => {
+    const result = computeFinalStatus({
+      careersUrl: "https://example.com/careers",
+      extraction: { completed: false, failure_code: "WEAK_SURFACE", failure_reason: "weak resolution" },
+      matchCount: 0,
+      resolutionMethod: "INDIRECT",
+    });
+    expect(result.computed_status).toBe("UNVERIFIED");
+  });
+
+  it("completed=false + UNRESOLVED → UNVERIFIED (no throw)", () => {
+    const result = computeFinalStatus({
+      careersUrl: "https://example.com/careers",
+      extraction: { completed: false, failure_code: "LISTINGS_SURFACE_UNRESOLVED", failure_reason: "unresolved" },
+      matchCount: 0,
+      resolutionMethod: "UNRESOLVED",
+    });
+    expect(result.computed_status).toBe("UNVERIFIED");
+  });
+
+  it("completed=false + PLAYWRIGHT_REQUIRED → UNVERIFIED (no throw)", () => {
+    const result = computeFinalStatus({
+      careersUrl: "https://example.com/careers",
+      extraction: { completed: false, failure_code: "JS_REQUIRED_UNRESOLVED", failure_reason: "js required" },
+      matchCount: 0,
+      resolutionMethod: "PLAYWRIGHT_REQUIRED",
+    });
+    expect(result.computed_status).toBe("UNVERIFIED");
+  });
+
+  it("completed=false + null resolution → UNVERIFIED (no throw)", () => {
+    const result = computeFinalStatus({
+      careersUrl: null,
+      extraction: { completed: false, failure_code: "CAREERS_NOT_FOUND", failure_reason: "not found" },
+      matchCount: 0,
+      resolutionMethod: null,
+    });
+    expect(result.computed_status).toBe("UNVERIFIED");
+  });
+
+  // C5.1: when extraction is marked complete but the resolution context is weak or null,
+  // computeFinalStatus would compute NO_MATCH_SCAN_COMPLETED and then assertFinalOutcomeRules
+  // throws — enforcing that uncertain resolution can never claim "no match".
+  // In practice processClaimedCompany overrides completed=true to false for weak contexts
+  // (isExtractionContextTrustworthy guard), so assertFinalOutcomeRules is defense-in-depth.
+
+  it("C5.1: completed=true, matchCount=0, INDIRECT → throws (uncertain resolution cannot claim no match)", () => {
+    expect(() =>
+      computeFinalStatus({
+        careersUrl: "https://example.com/careers",
+        extraction: { completed: true },
+        matchCount: 0,
+        resolutionMethod: "INDIRECT",
+      })
+    ).toThrow();
+  });
+
+  it("C5.1: completed=true, matchCount=0, UNRESOLVED → throws", () => {
+    expect(() =>
+      computeFinalStatus({
+        careersUrl: "https://example.com/careers",
+        extraction: { completed: true },
+        matchCount: 0,
+        resolutionMethod: "UNRESOLVED",
+      })
+    ).toThrow();
+  });
+
+  it("C5.1: completed=true, matchCount=0, null resolution → throws", () => {
+    expect(() =>
+      computeFinalStatus({
+        careersUrl: "https://example.com/careers",
+        extraction: { completed: true },
+        matchCount: 0,
+        resolutionMethod: null,
+      })
+    ).toThrow();
+  });
+
+  // R5.2: same enforcement for MATCHES_FOUND — weak resolution cannot claim matches found.
+
+  it("R5.2: completed=true, matchCount=1, INDIRECT → throws (uncertain resolution cannot claim matches found)", () => {
+    expect(() =>
+      computeFinalStatus({
+        careersUrl: "https://example.com/careers",
+        extraction: { completed: true },
+        matchCount: 1,
+        resolutionMethod: "INDIRECT",
+      })
+    ).toThrow();
+  });
+
+  it("R5.2: completed=true, matchCount=1, null resolution → throws", () => {
+    expect(() =>
+      computeFinalStatus({
+        careersUrl: "https://example.com/careers",
+        extraction: { completed: true },
+        matchCount: 1,
+        resolutionMethod: null,
+      })
+    ).toThrow();
+  });
+
+  // Positive guards: strong resolution methods must still produce confident outcomes.
+
+  it("ATS_RESOLVED is a strong resolution: completed=true, matchCount=0 → NO_MATCH_SCAN_COMPLETED", () => {
+    const result = computeFinalStatus({
+      careersUrl: "https://example.com/careers",
+      extraction: { completed: true },
+      matchCount: 0,
+      resolutionMethod: "ATS_RESOLVED",
+    });
+    expect(result.computed_status).toBe("NO_MATCH_SCAN_COMPLETED");
+  });
+
+  it("CTA_RESOLVED is a strong resolution: completed=true, matchCount=2 → MATCHES_FOUND", () => {
+    const result = computeFinalStatus({
+      careersUrl: "https://example.com/careers",
+      extraction: { completed: true },
+      matchCount: 2,
+      resolutionMethod: "CTA_RESOLVED",
+    });
+    expect(result.computed_status).toBe("MATCHES_FOUND");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Step 8.4 explicit: completed=false never produces MATCHES_FOUND
+// ---------------------------------------------------------------------------
+// The existing tests exercise completed=false with matchCount=0 only.
+// This block explicitly verifies that a non-zero matchCount cannot override
+// the completed=false rule — the result must always be UNVERIFIED.
+describe("computeFinalStatus — completed=false always yields UNVERIFIED regardless of matchCount", () => {
+  it("completed=false with matchCount > 0 and strong resolution → UNVERIFIED (never MATCHES_FOUND)", () => {
+    const result = computeFinalStatus({
+      careersUrl: "https://example.com/careers",
+      extraction: { completed: false, failure_code: "BLOCKED", failure_reason: "request blocked" },
+      matchCount: 5,
+      resolutionMethod: "DIRECT_VERIFIED",
+    });
+    expect(result.computed_status).toBe("UNVERIFIED");
+  });
+
+  it("completed=false with matchCount > 0 and null resolution → UNVERIFIED", () => {
+    const result = computeFinalStatus({
+      careersUrl: null,
+      extraction: { completed: false, failure_code: "CAREERS_NOT_FOUND", failure_reason: "not found" },
+      matchCount: 3,
+      resolutionMethod: null,
+    });
+    expect(result.computed_status).toBe("UNVERIFIED");
   });
 });

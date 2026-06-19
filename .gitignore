@@ -19,6 +19,8 @@ apps/data/*.sqlite
 apps/data/*.sqlite-*
 apps/api/data/*.sqlite
 apps/api/data/*.sqlite-*
+# Stray file created when DB_PATH=":memory:" is path-resolved instead of passed raw
+apps/api/:memory:
 
 # Logs
 *.log
@@ -47,3 +49,4 @@ playwright-report/
 # OS files
 .DS_Store
 Thumbs.db
+.rocketride/

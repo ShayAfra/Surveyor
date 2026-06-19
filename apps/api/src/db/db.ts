@@ -10,6 +10,7 @@ const apiPackageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..")
 function resolveDbPath(): string {
   const fromEnv = process.env.DB_PATH?.trim();
   if (fromEnv) {
+    if (fromEnv === ":memory:") return ":memory:";
     // Resolve relative paths against the package root, not process.cwd().
     return isAbsolute(fromEnv) ? fromEnv : join(apiPackageRoot, fromEnv);
   }

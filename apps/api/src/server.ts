@@ -208,7 +208,13 @@ app.get("/api/runs/:runId", (req, res) => {
   return res.json(responseBody);
 });
 
-app.listen(PORT, () => {
-  runRestartRecovery();
-  startWorkerLoop();
-});
+// Export app for endpoint tests. listen() is guarded so importing this module
+// in test files does not start the worker loop or bind a port.
+export { app };
+
+if (process.env.NODE_ENV !== "test") {
+  app.listen(PORT, () => {
+    runRestartRecovery();
+    startWorkerLoop();
+  });
+}
