@@ -14,15 +14,51 @@ This modularization pass should reduce file level tangling while preserving the 
 
 The current Core Scanner documents remain authoritative:
 
-1. `roadmap.md`
-2. `decisiondoc.md`
-3. `endtoendlifecycle.md`
+1. `CLAUDE.md`
+2. `operatingContext.md`
 
 This document does not replace those files.
 
 This document is only a refactor plan for improving code organization before the readiness checklist.
 
 If this document conflicts with the existing Core Scanner lifecycle or decision docs, the existing Core Scanner docs win.
+
+## Regression Safety Net Prerequisite
+
+Modularization may only begin after all four of these pass cleanly:
+
+```bash
+npm test --workspace=apps/api
+npm test --workspace=apps/web
+npm run build --workspace=apps/api
+npm run build --workspace=apps/web
+```
+
+The regression safety sprint added backend lifecycle tests, API contract tests, trace tests, role spec tests, matching tests, and CSV export tests. All of these must remain green throughout the modularization pass.
+
+### Test protection rule
+
+During modularization, do not weaken, delete, skip, or bypass regression tests to make refactors pass.
+
+If a test fails after a modularization change, treat it as a possible behavior change until proven otherwise. Investigate the failure before continuing.
+
+### roleSpec guardrail
+
+Do not change `roleSpec` behavior during modularization.
+
+Specifically, do not reintroduce raw role prepending, title deduping, relaxed validation, or any LLM behavior changes. If any of these need revisiting, handle them as a separate explicit behavior change with its own review — not as a side effect of modularization.
+
+### DB_PATH guardrail
+
+Do not change `DB_PATH=":memory:"` handling during modularization.
+
+The test database must remain true in-memory SQLite or an explicitly approved isolated temp database. Do not allow tests to create `apps/api/:memory:` as a file path on disk.
+
+## Git checkpoint requirement
+
+Start modularization from a clean committed checkpoint.
+
+Do not mix unrelated cleanup, docs cleanup, test sprint changes, or product work into modularization commits. Each modularization slice should be independently reviewable and revertable.
 
 ## CTO framing
 
@@ -114,9 +150,9 @@ Do not start by rewriting discovery or extraction internals.
 
 The order should be:
 
-1. Extract API route and service boundaries from `server.ts`.
+1. Extract API route and service boundaries from `server.ts`. POST `/api/runs` and GET `/api/runs/:runId` may be combined into a single API route extraction pass if the baseline is green and both routes can be moved without behavioral risk.
 2. Extract run detail response assembly helpers.
-3. Centralize trace event names and builder helpers without changing `writeTraceEvent`.
+3. Centralize trace event names and builder helpers without changing `writeTraceEvent`. This step is optional — see trace centralization note below.
 4. Extract pipeline stage wrappers from `processClaimedCompany.ts`.
 5. Only after wrappers exist, consider small cleanup inside `processClaimedCompany.ts`.
 6. Leave discovery and extraction internals mostly intact until after the Pre Agent Expansion Readiness pass.
@@ -164,13 +200,20 @@ Make sure the current app state is known before refactoring.
 
 ## Instructions
 
-Before making changes, run the existing build and test commands used by the project.
+Before making any changes, run all four of these commands and record their results:
 
-If the exact commands are unclear, inspect the package scripts and run the narrowest relevant commands for the API and web apps.
+```bash
+npm test --workspace=apps/api
+npm test --workspace=apps/web
+npm run build --workspace=apps/api
+npm run build --workspace=apps/web
+```
+
+All four must pass before implementation begins. If any command fails, do not proceed with modularization. Investigate and resolve the failure first.
 
 ## Acceptance criteria
 
-1. Current baseline result is recorded.
+1. Current baseline result is recorded for all four commands.
 2. Any pre existing failing tests are noted.
 3. No code changes are made in this step.
 
@@ -184,20 +227,17 @@ Establish a baseline before modularization.
 
 Do not modify code.
 
-Find the relevant package scripts for build and test.
-
-Run or identify the narrowest commands needed to verify:
-1. API build
-2. API tests if available
-3. Web build if available
-4. Shared package build if available
+Run the following four commands and record their results:
+1. npm test --workspace=apps/api
+2. npm test --workspace=apps/web
+3. npm run build --workspace=apps/api
+4. npm run build --workspace=apps/web
 
 Return:
-1. Commands found
-2. Commands run
-3. Results
-4. Any pre existing failures
-5. Whether it is safe to begin behavior preserving modularization
+1. Commands run
+2. Results for each command
+3. Any pre existing failures
+4. Whether all four pass and it is safe to begin behavior preserving modularization
 
 Do not suggest product changes.
 Do not refactor anything.
@@ -374,11 +414,13 @@ Return:
 4. Any risks or uncertainty
 ```
 
-# Step 3: Centralize trace event names and builders
+# Step 3: Centralize trace event names and builders (optional)
 
 ## Goal
 
 Reduce scattered trace event construction while preserving the existing `writeTraceEvent` interface and payload contents.
+
+This step is optional. Only perform it if event names, payload contents, run scoped versus company scoped behavior, and timing can be preserved exactly. If there is any uncertainty about preserving exact trace behavior, leave the trace call sites alone and skip this step.
 
 ## Reason
 
@@ -433,11 +475,14 @@ The key rule is that `writeTraceEvent` remains the only persistence boundary.
 3. Payload contents are unchanged.
 4. Existing trace tests or manual trace inspection still pass.
 5. No scanner behavior changes.
+6. If exact preservation is uncertain, skip this step entirely rather than risk trace drift.
 
 ## Implementation prompt
 
 ```text
 Centralize trace event names and builder helpers without changing emitted trace behavior.
+
+Important: this step is optional. Only proceed if you can confirm that event names, payload contents, run scoped versus company scoped behavior, and timing are preserved exactly. If uncertain, leave trace call sites unchanged and skip this step.
 
 Constraints:
 1. Do not change writeTraceEvent signature.

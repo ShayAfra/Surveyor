@@ -25,15 +25,34 @@ The Core Scanner must remain conservative, deterministic after role spec generat
 
 ## Current scope rule
 
-The existing Surveyor MVP docs remain authoritative for the Core Scanner.
+The following documents are authoritative for the Core Scanner:
 
-Do not rewrite the main roadmap, decision doc, or end to end lifecycle as part of this pass.
+1. CLAUDE.md
+2. operatingContext.md
+3. modularizationPlan.md
+
+Do not rewrite these documents as part of this pass.
 
 Do not add future agent features into the Core Scanner.
 
 This pass only answers:
 
 Is the scanner stable enough to support the next phase?
+
+## Regression safety net prerequisite
+
+Before starting Gate 1, all four commands must pass:
+
+```bash
+npm test --workspace=apps/api
+npm test --workspace=apps/web
+npm run build --workspace=apps/api
+npm run build --workspace=apps/web
+```
+
+The regression safety net and modularization pass are already complete. Do not weaken, delete, skip, or bypass any regression tests to make readiness fixes pass. If a regression test fails after a change, treat it as a possible behavior change until proven otherwise.
+
+Do not start Gate 1 until all four commands pass cleanly.
 
 ## Definition of ready
 
@@ -87,9 +106,9 @@ Read the current Surveyor codebase and the authoritative docs.
 
 Authoritative docs:
 
-1. roadmap.md
-2. decisiondoc.md
-3. endtoendlifecycle.md
+1. CLAUDE.md
+2. operatingContext.md
+3. modularizationPlan.md
 
 Task:
 Perform a scanner readiness audit before Agent Expansion.
@@ -230,6 +249,7 @@ Constraints:
 9. Preserve deterministic matching.
 10. Preserve official careers surface policy.
 11. Keep the app runnable after the change.
+12. Do not weaken, delete, skip, or bypass regression tests to make blocking fixes pass. If a regression test fails after a fix, treat it as a possible behavior change until proven otherwise.
 
 Required behavior:
 
@@ -324,6 +344,14 @@ If no blocker issues remain, move to Gate 3.
 
 # Gate 3: Minimal job detail ingestion
 
+## Positioning note
+
+Minimal job detail ingestion is not Agent Expansion itself.
+
+It is the final scanner-adjacent prerequisite before Agent Expansion begins. Future agent features — particularly the Application Packet Agent — require full job description text or a recorded fetch failure per matched job. Without this layer, agent features would have to implement their own ad hoc fetching, which creates duplication and because future agent features should rely on stored job detail evidence, not fetch job descriptions ad hoc during agent execution.
+
+This gate completes the scanner's output contract. Agent Expansion starts after Gate 4 passes.
+
 ## Why this matters
 
 The future Application Packet Agent cannot work well with only:
@@ -370,15 +398,17 @@ Fields:
 
 Indexes:
 
-1. idx_job_details_job_row_id
-2. idx_job_details_run_id
-3. idx_job_details_company_id
+1. idx_job_details_run_id
+2. idx_job_details_company_id
 
-Rule:
-There must be at most one job_details row per job_row_id.
+Uniqueness:
+
+There must be a UNIQUE constraint or unique index on job_row_id so at most one job_details row exists per job_row_id.
+
+Do not rely on a normal index for this rule. The schema must enforce uniqueness at the database level.
 
 Reason:
-This keeps job_rows stable and leaves room for a later durable job_posts table.
+This keeps job_rows stable, prevents duplicate detail rows on repeated ingestion passes, and leaves room for a later durable job_posts table.
 
 ## Step 3.2: Add a job detail fetcher
 
@@ -421,11 +451,15 @@ Suggested failure codes:
 After matched job rows are created and the company finalization transaction has successfully committed:
 
 1. Query matched job rows for that company.
-2. For each matched job, check whether a job_details row already exists.
-3. If none exists, fetch the job detail.
-4. Insert one job_details row.
-5. Store either description_text or failure fields.
-6. Do not change company status if fetching fails.
+2. For each matched job, check whether a job_details row already exists for that job_row_id.
+3. If a job_details row already exists, skip fetching and inserting for that job.
+4. If none exists, fetch the job detail.
+5. Insert one job_details row.
+6. Store either description_text or failure fields.
+7. Do not change company status if fetching fails.
+
+Idempotency rule:
+Running job detail ingestion more than once must not create duplicate job_details rows. If a job_details row already exists for a job_row_id, skip fetching and inserting for that job. The UNIQUE constraint on job_row_id enforces this at the database level as a final guard.
 
 Important:
 Do not fetch job details inside the company finalization transaction.
@@ -435,21 +469,17 @@ Company finalization should stay fast, atomic, and scanner focused.
 
 ## Step 3.4: Add API visibility
 
-Choose the smallest useful option.
+Keep GET /api/runs/:runId lightweight.
 
-Preferred simple option:
-
-Add these fields to matched job output:
+Add these fields to matched job output in the run detail response:
 
 1. job_detail_available: boolean
 2. job_detail_failure_code: string or null
 3. job_detail_failure_reason: string or null
 
-Optional only if simple:
+Do not include full job_description_text in GET run detail by default. Full description text is potentially large and is not needed by the run list or status UI.
 
-4. job_description_text: string or null
-
-If returning full description text makes GET run detail too heavy, create a separate endpoint:
+Expose full description text through a dedicated endpoint:
 
 GET /api/jobs/:jobRowId/detail
 
@@ -585,8 +615,11 @@ Surveyor is ready to start Agent Expansion when:
 
 At that point, the next phase can start:
 
-1. Infrastructure Decisions
-2. Product North Star and Expansion Plan
-3. Accounts
-4. Profile and resume memory
-5. Application Packet Agent
+1. Data platform and ownership foundation
+2. Accounts
+3. Profile and resume memory
+4. Application Packet Agent
+5. Saved companies and searches
+6. Continuous monitoring
+7. Application tracking
+8. Referral intelligence remains parked

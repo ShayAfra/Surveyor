@@ -237,7 +237,7 @@ type RunDiscoveryResult =
     }
   | { status: "aborted" };
 
-async function runDiscoveryForCompany(args: {
+async function runDiscoveryStage(args: {
   run_id: string;
   run_company_id: string;
   company_name: string;
@@ -316,6 +316,294 @@ async function runDiscoveryForCompany(args: {
   };
 }
 
+async function runPlatformDetectionStage(args: {
+  run_id: string;
+  run_company_id: string;
+  worker_token: string;
+  extractionStartUrl: string;
+}): Promise<AtsType | "aborted"> {
+  const { run_id, run_company_id, worker_token, extractionStartUrl } = args;
+
+  let html = await fetchCareersHtml(extractionStartUrl);
+  if (html === null) {
+    html = "";
+  }
+
+  const detectedPlatform = detectPlatform(html, extractionStartUrl);
+
+  const uAts = updateAtsType.run(
+    detectedPlatform,
+    run_company_id,
+    CompanyStatus.IN_PROGRESS,
+    worker_token
+  );
+  if (uAts.changes !== 1) {
+    return "aborted";
+  }
+
+  writeTraceEvent({
+    run_id,
+    run_company_id,
+    event_type: "platform_detected",
+    message: "platform detection completed",
+    payload_json: JSON.stringify({
+      detected_platform: detectedPlatform,
+    }),
+    created_at: Date.now(),
+  });
+
+  if (!stillOwns(run_company_id, worker_token)) {
+    return "aborted";
+  }
+
+  return detectedPlatform;
+}
+
+function runExtractorSelectionStage(args: {
+  run_id: string;
+  run_company_id: string;
+  worker_token: string;
+  detectedPlatform: AtsType;
+}): { extractorName: string } | "aborted" {
+  const { run_id, run_company_id, worker_token, detectedPlatform } = args;
+
+  const extractorName = initialExtractorForAts(detectedPlatform);
+
+  const uExt = updateExtractorUsed.run(
+    extractorName,
+    run_company_id,
+    CompanyStatus.IN_PROGRESS,
+    worker_token
+  );
+  if (uExt.changes !== 1) {
+    return "aborted";
+  }
+
+  writeTraceEvent({
+    run_id,
+    run_company_id,
+    event_type: "extractor_selected",
+    message: "extractor selected",
+    payload_json: JSON.stringify({
+      extractor_used: extractorName,
+    }),
+    created_at: Date.now(),
+  });
+
+  if (!stillOwns(run_company_id, worker_token)) {
+    return "aborted";
+  }
+
+  return { extractorName };
+}
+
+async function runExtractionStage(args: {
+  run_id: string;
+  run_company_id: string;
+  worker_token: string;
+  extractionStartUrl: string;
+  detectedPlatform: AtsType;
+  extractorName: string;
+  discoveryResolutionMethod: string | null;
+}): Promise<{ extraction: ExtractJobsResult; finalExtractorUsed: string } | "aborted"> {
+  const {
+    run_id,
+    run_company_id,
+    worker_token,
+    extractionStartUrl,
+    detectedPlatform,
+    extractorName,
+    discoveryResolutionMethod,
+  } = args;
+
+  let extraction = await runTracedExtractorAttempt({
+    run_id,
+    run_company_id,
+    url: extractionStartUrl,
+    ats_type: detectedPlatform,
+    extractor_used: extractorName,
+    attempt_number: 1,
+  });
+
+  let finalExtractorUsed = extractorName;
+
+  if (
+    stillOwns(run_company_id, worker_token) &&
+    shouldAttemptPlaywrightFallback(
+      detectedPlatform,
+      extractorName,
+      extraction,
+      discoveryResolutionMethod
+    )
+  ) {
+    const uPw = updateExtractorUsed.run(
+      EXTRACTOR_USED.PLAYWRIGHT,
+      run_company_id,
+      CompanyStatus.IN_PROGRESS,
+      worker_token
+    );
+    if (uPw.changes !== 1) {
+      return "aborted";
+    }
+
+    writeTraceEvent({
+      run_id,
+      run_company_id,
+      event_type: "extractor_selected",
+      message: "extractor selected",
+      payload_json: JSON.stringify({
+        extractor_used: EXTRACTOR_USED.PLAYWRIGHT,
+      }),
+      created_at: Date.now(),
+    });
+
+    if (!stillOwns(run_company_id, worker_token)) {
+      return "aborted";
+    }
+
+    extraction = await runTracedExtractorAttempt({
+      run_id,
+      run_company_id,
+      url: extractionStartUrl,
+      ats_type: detectedPlatform,
+      extractor_used: EXTRACTOR_USED.PLAYWRIGHT,
+      attempt_number: 2,
+    });
+    finalExtractorUsed = EXTRACTOR_USED.PLAYWRIGHT;
+  }
+
+  // C4.1: Defense-in-depth — extraction must not be treated as complete on a
+  // weak or unresolved discovery surface. Listings-surface confidence itself
+  // is enforced inside extraction via `isConfidentListingsSurface` (not raw job
+  // count). INDIRECT / UNRESOLVED / PLAYWRIGHT_REQUIRED are excluded and should
+  // never reach this point.
+  const isExtractionContextTrustworthy =
+    discoveryResolutionMethod === "DIRECT_VERIFIED" ||
+    discoveryResolutionMethod === "ATS_RESOLVED" ||
+    discoveryResolutionMethod === "CTA_RESOLVED";
+
+  if (extraction.completed) {
+    if (!isExtractionContextTrustworthy) {
+      extraction = {
+        ...extraction,
+        completed: false,
+        failure_code: "WEAK_SURFACE",
+        failure_reason: "extraction context is not a trustworthy listings surface",
+      };
+    }
+  }
+
+  return { extraction, finalExtractorUsed };
+}
+
+function runMatchingAndFinalizationStage(args: {
+  run_id: string;
+  run_company_id: string;
+  worker_token: string;
+  careersUrl: string;
+  listingsUrl: string | null;
+  discoveryResolutionMethod: string | null;
+  detectedPlatform: AtsType;
+  finalExtractorUsed: string;
+  extraction: ExtractJobsResult;
+}): void {
+  const {
+    run_id,
+    run_company_id,
+    worker_token,
+    careersUrl,
+    listingsUrl,
+    discoveryResolutionMethod,
+    detectedPlatform,
+    finalExtractorUsed,
+    extraction,
+  } = args;
+
+  const roleRow = selectRoleSpecJson.get(run_id) as { j: string } | undefined;
+  const roleSpec = roleRow ? parseRoleSpec(roleRow.j) : null;
+
+  // Step 8.4: if extraction completed but role spec is unavailable (DB anomaly),
+  // matching cannot be performed. Treat the outcome as uncertain → UNVERIFIED.
+  // Passing completed=false prevents NO_MATCH_SCAN_COMPLETED from being assigned
+  // when matching was never actually evaluated.
+  const extractionForFinalization =
+    extraction.completed && roleSpec === null
+      ? {
+          completed: false as const,
+          failure_code: "ROLE_SPEC_UNAVAILABLE",
+          failure_reason: "role spec unavailable for matching",
+        }
+      : extraction;
+
+  const matched =
+    extractionForFinalization.completed && roleSpec
+      ? matchJobs(extraction.jobs, roleSpec)
+      : [];
+
+  const computed = computeFinalStatus({
+    careersUrl: careersUrl,
+    extraction: extractionForFinalization,
+    matchCount: matched.length,
+    // C5.1: Forward resolution method so finalization can independently
+    // enforce that weak/unresolved resolution cannot produce NO_MATCH_SCAN_COMPLETED.
+    resolutionMethod: discoveryResolutionMethod,
+  });
+
+  // D6.1: when the company ends up UNVERIFIED and discovery already determined
+  // that the listings surface could not be resolved, replace the extraction-level
+  // failure code with a more specific discovery failure code so the UI / CSV can
+  // show the root cause rather than a downstream extraction error.
+  let finalFailureCode = computed.failure_code;
+  let finalFailureReason = computed.failure_reason;
+  if (computed.computed_status === CompanyStatus.UNVERIFIED) {
+    if (discoveryResolutionMethod === "UNRESOLVED") {
+      finalFailureCode = "LISTINGS_SURFACE_UNRESOLVED";
+      finalFailureReason =
+        "careers page was found but no listings surface could be resolved from it";
+    } else if (discoveryResolutionMethod === "PLAYWRIGHT_REQUIRED") {
+      finalFailureCode = "JS_REQUIRED_UNRESOLVED";
+      finalFailureReason =
+        "careers page requires JavaScript rendering which could not be completed";
+    }
+  }
+
+  if (!stillOwns(run_company_id, worker_token)) {
+    return;
+  }
+
+  finalizeAndCompleteRun({
+    run_id,
+    run_company_id,
+    worker_token,
+    now_ms: Date.now(),
+    computed_status: computed.computed_status,
+    careers_url: careersUrl,
+    // R4.2: Pass the resolved listings surface so the finalization_outcome trace
+    // records the exact URL extraction ran on.  listingsUrl is always non-null
+    // here — the extractionStartUrl === null guard above ensures we only reach
+    // this point when a strong listings surface was confirmed by the resolver.
+    //
+    // For DIRECT_VERIFIED: listings_url === careers_url (same page, both recorded).
+    // For ATS_RESOLVED / CTA_RESOLVED: listings_url differs from careers_url,
+    // making the one-hop resolution explicit and inspectable in the trace.
+    listings_url: listingsUrl,
+    ats_type: detectedPlatform,
+    extractor_used: finalExtractorUsed,
+    listings_scanned: extraction.listings_scanned,
+    pages_visited: extraction.pages_visited,
+    failure_code: finalFailureCode,
+    failure_reason: finalFailureReason,
+    matchedJobs:
+      computed.computed_status === CompanyStatus.MATCHES_FOUND ? matched : [],
+    // C6.2: resolution method forwarded so finalization trace documents the path
+    // taken through the resolver (DIRECT_VERIFIED, ATS_RESOLVED, CTA_RESOLVED, etc.).
+    // DIRECT_VERIFIED only appears here for strong surfaces — weak surfaces exit
+    // earlier (extractionStartUrl === null guard) and never reach this point.
+    resolution_method: discoveryResolutionMethod,
+    completion_reason: deriveCompletionReason(extractionForFinalization),
+  });
+}
+
 export async function processClaimedCompany(args: {
   run_id: string;
   run_company_id: string;
@@ -328,7 +616,8 @@ export async function processClaimedCompany(args: {
     return;
   }
 
-  const discoveryOutcome = await runDiscoveryForCompany({
+  // Stage 1: Discovery
+  const discoveryOutcome = await runDiscoveryStage({
     run_id,
     run_company_id,
     company_name,
@@ -461,223 +750,55 @@ export async function processClaimedCompany(args: {
     return;
   }
 
-  let html = await fetchCareersHtml(extractionStartUrl);
-  if (html === null) {
-    html = "";
-  }
-
-  const detectedPlatform = detectPlatform(html, extractionStartUrl);
-
-  const uAts = updateAtsType.run(
-    detectedPlatform,
-    run_company_id,
-    CompanyStatus.IN_PROGRESS,
-    worker_token
-  );
-  if (uAts.changes !== 1) {
-    return;
-  }
-
-  writeTraceEvent({
-    run_id,
-    run_company_id,
-    event_type: "platform_detected",
-    message: "platform detection completed",
-    payload_json: JSON.stringify({
-      detected_platform: detectedPlatform,
-    }),
-    created_at: Date.now(),
-  });
-
-  if (!stillOwns(run_company_id, worker_token)) {
-    return;
-  }
-
-  const extractorName = initialExtractorForAts(detectedPlatform);
-
-  const uExt = updateExtractorUsed.run(
-    extractorName,
-    run_company_id,
-    CompanyStatus.IN_PROGRESS,
-    worker_token
-  );
-  if (uExt.changes !== 1) {
-    return;
-  }
-
-  writeTraceEvent({
-    run_id,
-    run_company_id,
-    event_type: "extractor_selected",
-    message: "extractor selected",
-    payload_json: JSON.stringify({
-      extractor_used: extractorName,
-    }),
-    created_at: Date.now(),
-  });
-
-  if (!stillOwns(run_company_id, worker_token)) {
-    return;
-  }
-
-  let extraction = await runTracedExtractorAttempt({
-    run_id,
-    run_company_id,
-    url: extractionStartUrl,
-    ats_type: detectedPlatform,
-    extractor_used: extractorName,
-    attempt_number: 1,
-  });
-
-  let finalExtractorUsed = extractorName;
-
-  if (
-    stillOwns(run_company_id, worker_token) &&
-    shouldAttemptPlaywrightFallback(
-      detectedPlatform,
-      extractorName,
-      extraction,
-      discoveryResolutionMethod
-    )
-  ) {
-    const uPw = updateExtractorUsed.run(
-      EXTRACTOR_USED.PLAYWRIGHT,
-      run_company_id,
-      CompanyStatus.IN_PROGRESS,
-      worker_token
-    );
-    if (uPw.changes !== 1) {
-      return;
-    }
-
-    writeTraceEvent({
-      run_id,
-      run_company_id,
-      event_type: "extractor_selected",
-      message: "extractor selected",
-      payload_json: JSON.stringify({
-        extractor_used: EXTRACTOR_USED.PLAYWRIGHT,
-      }),
-      created_at: Date.now(),
-    });
-
-    if (!stillOwns(run_company_id, worker_token)) {
-      return;
-    }
-
-    extraction = await runTracedExtractorAttempt({
-      run_id,
-      run_company_id,
-      url: extractionStartUrl,
-      ats_type: detectedPlatform,
-      extractor_used: EXTRACTOR_USED.PLAYWRIGHT,
-      attempt_number: 2,
-    });
-    finalExtractorUsed = EXTRACTOR_USED.PLAYWRIGHT;
-  }
-
-  // C4.1: Defense-in-depth — extraction must not be treated as complete on a
-  // weak or unresolved discovery surface. Listings-surface confidence itself
-  // is enforced inside extraction via `isConfidentListingsSurface` (not raw job
-  // count). INDIRECT / UNRESOLVED / PLAYWRIGHT_REQUIRED are excluded and should
-  // never reach this point.
-  const isExtractionContextTrustworthy =
-    discoveryResolutionMethod === "DIRECT_VERIFIED" ||
-    discoveryResolutionMethod === "ATS_RESOLVED" ||
-    discoveryResolutionMethod === "CTA_RESOLVED";
-
-  if (extraction.completed) {
-    if (!isExtractionContextTrustworthy) {
-      extraction = {
-        ...extraction,
-        completed: false,
-        failure_code: "WEAK_SURFACE",
-        failure_reason: "extraction context is not a trustworthy listings surface",
-      };
-    }
-  }
-
-  const roleRow = selectRoleSpecJson.get(run_id) as { j: string } | undefined;
-  const roleSpec = roleRow ? parseRoleSpec(roleRow.j) : null;
-
-  // Step 8.4: if extraction completed but role spec is unavailable (DB anomaly),
-  // matching cannot be performed. Treat the outcome as uncertain → UNVERIFIED.
-  // Passing completed=false prevents NO_MATCH_SCAN_COMPLETED from being assigned
-  // when matching was never actually evaluated.
-  const extractionForFinalization =
-    extraction.completed && roleSpec === null
-      ? {
-          completed: false as const,
-          failure_code: "ROLE_SPEC_UNAVAILABLE",
-          failure_reason: "role spec unavailable for matching",
-        }
-      : extraction;
-
-  const matched =
-    extractionForFinalization.completed && roleSpec
-      ? matchJobs(extraction.jobs, roleSpec)
-      : [];
-
-  const computed = computeFinalStatus({
-    careersUrl: careersUrl,
-    extraction: extractionForFinalization,
-    matchCount: matched.length,
-    // C5.1: Forward resolution method so finalization can independently
-    // enforce that weak/unresolved resolution cannot produce NO_MATCH_SCAN_COMPLETED.
-    resolutionMethod: discoveryResolutionMethod,
-  });
-
-  // D6.1: when the company ends up UNVERIFIED and discovery already determined
-  // that the listings surface could not be resolved, replace the extraction-level
-  // failure code with a more specific discovery failure code so the UI / CSV can
-  // show the root cause rather than a downstream extraction error.
-  let finalFailureCode = computed.failure_code;
-  let finalFailureReason = computed.failure_reason;
-  if (computed.computed_status === CompanyStatus.UNVERIFIED) {
-    if (discoveryResolutionMethod === "UNRESOLVED") {
-      finalFailureCode = "LISTINGS_SURFACE_UNRESOLVED";
-      finalFailureReason =
-        "careers page was found but no listings surface could be resolved from it";
-    } else if (discoveryResolutionMethod === "PLAYWRIGHT_REQUIRED") {
-      finalFailureCode = "JS_REQUIRED_UNRESOLVED";
-      finalFailureReason =
-        "careers page requires JavaScript rendering which could not be completed";
-    }
-  }
-
-  if (!stillOwns(run_company_id, worker_token)) {
-    return;
-  }
-
-  finalizeAndCompleteRun({
+  // Stage 2: Platform detection
+  const platformResult = await runPlatformDetectionStage({
     run_id,
     run_company_id,
     worker_token,
-    now_ms: Date.now(),
-    computed_status: computed.computed_status,
-    careers_url: careersUrl,
-    // R4.2: Pass the resolved listings surface so the finalization_outcome trace
-    // records the exact URL extraction ran on.  listingsUrl is always non-null
-    // here — the extractionStartUrl === null guard above ensures we only reach
-    // this point when a strong listings surface was confirmed by the resolver.
-    //
-    // For DIRECT_VERIFIED: listings_url === careers_url (same page, both recorded).
-    // For ATS_RESOLVED / CTA_RESOLVED: listings_url differs from careers_url,
-    // making the one-hop resolution explicit and inspectable in the trace.
-    listings_url: listingsUrl,
-    ats_type: detectedPlatform,
-    extractor_used: finalExtractorUsed,
-    listings_scanned: extraction.listings_scanned,
-    pages_visited: extraction.pages_visited,
-    failure_code: finalFailureCode,
-    failure_reason: finalFailureReason,
-    matchedJobs:
-      computed.computed_status === CompanyStatus.MATCHES_FOUND ? matched : [],
-    // C6.2: resolution method forwarded so finalization trace documents the path
-    // taken through the resolver (DIRECT_VERIFIED, ATS_RESOLVED, CTA_RESOLVED, etc.).
-    // DIRECT_VERIFIED only appears here for strong surfaces — weak surfaces exit
-    // earlier (extractionStartUrl === null guard) and never reach this point.
-    resolution_method: discoveryResolutionMethod,
-    completion_reason: deriveCompletionReason(extractionForFinalization),
+    extractionStartUrl,
+  });
+  if (platformResult === "aborted") {
+    return;
+  }
+  const detectedPlatform = platformResult;
+
+  // Stage 3: Extractor selection
+  const selectionResult = runExtractorSelectionStage({
+    run_id,
+    run_company_id,
+    worker_token,
+    detectedPlatform,
+  });
+  if (selectionResult === "aborted") {
+    return;
+  }
+  const { extractorName } = selectionResult;
+
+  // Stage 4: Extraction (with optional Playwright fallback)
+  const extractionResult = await runExtractionStage({
+    run_id,
+    run_company_id,
+    worker_token,
+    extractionStartUrl,
+    detectedPlatform,
+    extractorName,
+    discoveryResolutionMethod,
+  });
+  if (extractionResult === "aborted") {
+    return;
+  }
+  const { extraction, finalExtractorUsed } = extractionResult;
+
+  // Stage 5: Matching and finalization
+  runMatchingAndFinalizationStage({
+    run_id,
+    run_company_id,
+    worker_token,
+    careersUrl,
+    listingsUrl,
+    discoveryResolutionMethod,
+    detectedPlatform,
+    finalExtractorUsed,
+    extraction,
   });
 }
