@@ -139,6 +139,14 @@ const NAV_CTA_TEXT_RE =
   /^(?:careers?|jobs?|openings?|positions?|roles?|opportunities|hiring|join\s+us|work\s+with\s+us|view\s+(?:all\s+)?(?:jobs?|openings?|roles?)|see\s+(?:all\s+)?(?:jobs?|openings?|roles?)|browse\s+(?:all\s+)?(?:jobs?|roles?)|explore\s+(?:roles?|careers?|jobs?|opportunities?)|search\s+jobs?|find\s+(?:a\s+)?jobs?|open\s+roles?|our\s+(?:jobs?|openings?|roles?)|all\s+(?:jobs?|roles?|openings?)|apply\s+now|see\s+all\s+openings?)$/i;
 
 /**
+ * Visible anchor text that identifies a pagination control rather than a job title.
+ * Exact-match (anchored ^ and $) so that real titles containing these substrings
+ * (e.g. "Next Generation Platform Engineer") are not accidentally excluded.
+ */
+const PAGINATION_NAV_TEXT_RE =
+  /^(?:next(?:\s+page)?|prev(?:ious)?(?:\s+page)?|›|»|‹|«|>|<|\d+)$/i;
+
+/**
  * C4.2: URL path terminal segments that identify a container or category page.
  * A URL whose path ends at one of these segments — without a further job
  * identifier slug — points to an index/category page, not a specific job posting.
@@ -157,22 +165,90 @@ const CONTAINER_PATH_TERMINALS = new Set<string>([
 ]);
 
 /**
- * C4.2: Return true when the link is a navigation, CTA, or container anchor
- * that must NOT be counted as an extracted job listing.
+ * Returns true when the URL is unambiguously a pagination index rather than a
+ * job detail page.
  *
- * Two independent checks — a link is excluded when EITHER matches:
+ * Two unambiguous signals:
  *
- *   Text check — the visible anchor text matches a known navigation or CTA
+ *   Q — Pure query-param pagination: the only query keys present are known
+ *       pagination keys (page, p, offset, start) and there are no path segments
+ *       after a container terminal that look like a slug. e.g. ?page=2, ?offset=10.
+ *       Note: this check only fires when the path itself doesn't extend into a
+ *       job detail (i.e. last path segment is a container terminal or the path is
+ *       the same as the base listing URL).
+ *
+ *   P — Explicit pagination path segment: a container terminal is immediately
+ *       followed by a known pagination segment word ("page", "pages", "p").
+ *       e.g. /jobs/page/2, /careers/pages/3. Bare numeric IDs like /jobs/1 are
+ *       NOT treated as pagination because they are indistinguishable from job
+ *       posting IDs without DOM context.
+ *
+ * The text check (PAGINATION_NAV_TEXT_RE) is the primary guard and handles the
+ * common case of <a href="/careers/page/2">Next</a>. This function handles the
+ * edge case where an anchor inside a pagination container has href-only evidence.
+ */
+function isPaginationIndexUrl(href: string): boolean {
+  try {
+    const u = new URL(href);
+    const PAGINATION_ONLY_QUERY_KEYS = new Set(["page", "p", "offset", "start"]);
+    const PAGINATION_PATH_SEGS = new Set(["page", "pages", "p"]);
+
+    const segments = u.pathname.split("/").filter(Boolean).map((s) => s.toLowerCase());
+    const lastSeg = segments[segments.length - 1];
+
+    // Q: Pure query-param pagination on a container-terminal or root path.
+    // Only applies when the path itself ends at a container terminal (not a slug).
+    const keys = [...u.searchParams.keys()].map((k) => k.toLowerCase());
+    if (
+      keys.length > 0 &&
+      keys.every((k) => PAGINATION_ONLY_QUERY_KEYS.has(k)) &&
+      (segments.length === 0 || (lastSeg && CONTAINER_PATH_TERMINALS.has(lastSeg)))
+    ) {
+      return true;
+    }
+
+    // P: Explicit pagination path segment after a container terminal.
+    for (let i = 0; i < segments.length - 1; i++) {
+      if (CONTAINER_PATH_TERMINALS.has(segments[i]!)) {
+        const next = segments[i + 1]!;
+        if (PAGINATION_PATH_SEGS.has(next)) {
+          return true;
+        }
+      }
+    }
+  } catch {
+    /* non-absolute URL or parse failure — fall through */
+  }
+  return false;
+}
+
+/**
+ * C4.2: Return true when the link is a navigation, CTA, container, or pagination
+ * control anchor that must NOT be counted as an extracted job listing.
+ *
+ * Three independent checks — a link is excluded when ANY matches:
+ *
+ *   Text check 1 — the visible anchor text matches a known navigation or CTA
  *   phrase (e.g. "View all jobs", "See openings", "Careers"). Exact-match
  *   patterns prevent real job title text from being accidentally excluded.
  *
+ *   Text check 2 — the visible anchor text is a pagination control label
+ *   (e.g. "Next", "Next page", "Previous", "›", "»", "2"). These are never
+ *   job titles and must not be counted as extracted listings. This is the
+ *   primary guard against pagination anchors (e.g. <a href="/jobs/page/2">Next</a>)
+ *   being miscounted as job rows, regardless of what the href contains.
+ *
  *   URL check — the URL path ends at a known container segment with no further
- *   job identifier (e.g. /careers, /company/jobs). Paths that include an
- *   additional segment past the container keyword — such as /jobs/12345-engineer
- *   or /careers/software-engineer — pass through as potential real listings.
+ *   job identifier (e.g. /careers, /company/jobs), OR the URL is a pure
+ *   pagination index URL whose only query keys are pagination params (page, p,
+ *   offset, start) and whose path contains an explicit pagination segment
+ *   (page/pages/p) directly after a container terminal.
  */
 function isNavOrContainerLink(href: string, text: string): boolean {
   if (NAV_CTA_TEXT_RE.test(text)) {
+    return true;
+  }
+  if (PAGINATION_NAV_TEXT_RE.test(text)) {
     return true;
   }
   try {
@@ -184,6 +260,7 @@ function isNavOrContainerLink(href: string, text: string): boolean {
   } catch {
     /* invalid URL — not excluded by URL check */
   }
+  if (isPaginationIndexUrl(href)) return true;
   return false;
 }
 
@@ -425,6 +502,66 @@ function completionUsesAtsThresholds(
 }
 
 /**
+ * Pagination and incomplete-enumeration signal patterns.
+ *
+ * Detects obvious HTML indicators that the page contains more job listings than
+ * were server-rendered on this single fetch. When any signal is present,
+ * extraction must not claim completed=true — doing so would risk a false
+ * NO_MATCH_SCAN_COMPLETED when the matching role appears only on a later page.
+ *
+ * Signals checked (all case-insensitive):
+ *   P1 — rel="next" link element (standard HTML pagination)
+ *   P2 — "next page" text/aria in anchors or buttons
+ *   P3 — "load more" pattern (button text or class)
+ *   P4 — "show more" / "show more jobs" pattern
+ *   P5 — "more jobs" / "view more jobs" / "see more jobs"
+ *   P6 — Pagination container elements (class/id containing "pagination")
+ *   P7 — "showing N-M of T" / "showing N to M of T" numeric range patterns
+ *   P8 — "page N of M" numeric page indicator
+ *
+ * Conservative design — false positives (marking a complete page as incomplete)
+ * are acceptable; false negatives (missing a pagination signal) are not. The
+ * set is deliberately limited to high-confidence, unambiguous signals.
+ */
+const PAGINATION_SIGNALS: RegExp[] = [
+  // P1: rel="next" — standard HTML link relation for paginated content
+  /\brel=["']next["']/i,
+  // P2: "next page" in visible anchor/button text or aria-label
+  /\bnext\s+page\b/i,
+  // P3: "load more" — common lazy-load pattern on job boards
+  /\bload\s+more\b/i,
+  // P4: "show more" — variant of lazy-load
+  /\bshow\s+more\b/i,
+  // P5: "more jobs" / "view more jobs" / "see more jobs"
+  /\b(?:view\s+more|see\s+more|more)\s+jobs?\b/i,
+  // P6: pagination container — class or id attribute containing "pagination", "pager", or "paginator"
+  /\b(?:class|id)=["'][^"']*(?:pagination|pager|paginator)[^"']*["']/i,
+  // P7a: "showing N-M of T" (e.g. "Showing 1-10 of 50 jobs")
+  /\bshowing\s+\d+\s*[-–]\s*\d+\s+of\s+\d+/i,
+  // P7b: "showing N to M of T" (e.g. "Showing 1 to 10 of 50 results")
+  /\bshowing\s+\d+\s+to\s+\d+\s+of\s+\d+/i,
+  // P8: "page N of M" (e.g. "Page 1 of 3")
+  /\bpage\s+\d+\s+of\s+\d+/i,
+];
+
+/**
+ * Returns true when the HTML contains an obvious signal that more listings exist
+ * beyond what was server-rendered on this single-page fetch.
+ *
+ * Used by extractJobsHttp and extractJobsWithPlaywright to block completed=true
+ * when pagination or lazy-load evidence is present.
+ *
+ * TODO: Multi-page enumeration is intentionally deferred.
+ * Future work should implement ATS-native extraction for known ATS platforms
+ * and a strict generic pagination fallback for UNKNOWN/custom pages.
+ * Until then, detected pagination fails closed as UNVERIFIED with
+ * PAGINATION_NOT_COMPLETED.
+ */
+export function hasPaginationSignal(html: string): boolean {
+  return PAGINATION_SIGNALS.some((re) => re.test(html));
+}
+
+/**
  * Authoritative deterministic gate for whether extraction may set `completed: true`.
  * Generic surfaces need stronger enumeration evidence; supported ATS boards may
  * confirm completion with fewer parsed rows when the URL/HTML show a real board
@@ -585,6 +722,19 @@ async function extractJobsWithPlaywright(
         };
       }
 
+      // Playwright renders one page only — no HTTP next-page following.
+      // If a pagination signal is present, enumeration is incomplete.
+      if (hasPaginationSignal(html)) {
+        return {
+          jobs,
+          completed: false,
+          listings_scanned,
+          pages_visited,
+          failure_code: "PAGINATION_NOT_COMPLETED",
+          failure_reason: "pagination detected; additional pages were not searched",
+        };
+      }
+
       const completed = isConfidentListingsSurface(html, url, jobs, EXTRACTOR_USED.PLAYWRIGHT);
 
       if (!completed && jobs.length > 0) {
@@ -688,19 +838,23 @@ async function extractJobsHttp(
     };
   }
 
-  const jobs = parseJobsFromHtml(html, url);
-  const listings_scanned = jobs.length;
+  // --- First-page-only extraction (Gate 2 conservative baseline) ---
+  // Multi-page enumeration is intentionally deferred (see hasPaginationSignal).
+  // This extractor only ever reads the single page it fetched above; it never
+  // fetches or follows a next-page URL.
   const pages_visited = 1;
 
+  const jobs = parseJobsFromHtml(html, url);
+
+  // Cap check after the first page.
   if (
-    pages_visited >= MAX_PAGES_PER_COMPANY ||
-    listings_scanned >= MAX_LISTINGS_PER_COMPANY ||
+    jobs.length >= MAX_LISTINGS_PER_COMPANY ||
     Date.now() - startMs >= MAX_TIME_PER_COMPANY_MS
   ) {
     return {
       jobs,
       completed: false,
-      listings_scanned,
+      listings_scanned: jobs.length,
       pages_visited,
       failure_code: "CAP_REACHED",
       failure_reason: "extraction limit reached",
@@ -712,7 +866,7 @@ async function extractJobsHttp(
       jobs: [],
       completed: false,
       listings_scanned: 0,
-      pages_visited: 1,
+      pages_visited,
       failure_code: "NO_LISTINGS_PARSED",
       failure_reason: "could not enumerate job listings from HTML",
     };
@@ -723,9 +877,24 @@ async function extractJobsHttp(
       jobs: [],
       completed: false,
       listings_scanned: 0,
-      pages_visited: 1,
+      pages_visited,
       failure_code: "HTTP_NO_LISTINGS",
       failure_reason: "no job listings retrieved via HTTP extractor",
+    };
+  }
+
+  // Incomplete-enumeration detector: obvious pagination/lazy-load evidence on
+  // this already-fetched page means more listings likely exist beyond it.
+  // We do not fetch page 2 — fail closed instead so a real match on a later
+  // page can never be silently reported as NO_MATCH_SCAN_COMPLETED.
+  if (hasPaginationSignal(html)) {
+    return {
+      jobs,
+      completed: false,
+      listings_scanned: jobs.length,
+      pages_visited,
+      failure_code: "PAGINATION_NOT_COMPLETED",
+      failure_reason: "pagination detected; additional pages were not searched",
     };
   }
 
@@ -736,7 +905,7 @@ async function extractJobsHttp(
     return {
       jobs,
       completed: false,
-      listings_scanned,
+      listings_scanned: jobs.length,
       pages_visited,
       failure_code: isGeneric ? "INSUFFICIENT_LISTINGS" : "NOT_CONFIDENT_SURFACE",
       failure_reason: isGeneric
@@ -748,7 +917,7 @@ async function extractJobsHttp(
   return {
     jobs,
     completed,
-    listings_scanned,
+    listings_scanned: jobs.length,
     pages_visited,
   };
 }

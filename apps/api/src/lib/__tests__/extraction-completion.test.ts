@@ -11,6 +11,7 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   extractJobs,
+  hasPaginationSignal,
   isConfidentListingsSurface,
   EXTRACTOR_USED,
   MIN_CONFIDENT_LISTINGS,
@@ -594,6 +595,379 @@ describe("computeFinalStatus — weak and null resolution enforcement", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Pagination signal detection — hasPaginationSignal unit tests
+// ---------------------------------------------------------------------------
+describe("hasPaginationSignal", () => {
+  it("returns false for plain HTML with no pagination signals", () => {
+    expect(hasPaginationSignal("<html><body><p>hello</p></body></html>")).toBe(false);
+  });
+
+  it("detects rel=next link element (P1)", () => {
+    expect(hasPaginationSignal('<link rel="next" href="/jobs?page=2">')).toBe(true);
+  });
+
+  it("detects anchor with rel=next (P1)", () => {
+    expect(hasPaginationSignal('<a rel="next" href="/jobs?page=2">Next</a>')).toBe(true);
+  });
+
+  it("detects 'next page' text (P2)", () => {
+    expect(hasPaginationSignal('<a href="/jobs?page=2">Next Page</a>')).toBe(true);
+  });
+
+  it("detects 'load more' button text (P3)", () => {
+    expect(hasPaginationSignal('<button>Load More</button>')).toBe(true);
+  });
+
+  it("detects 'load more' in class attribute (P3)", () => {
+    expect(hasPaginationSignal('<div class="load-more-button">Load More Jobs</div>')).toBe(true);
+  });
+
+  it("detects 'show more' pattern (P4)", () => {
+    expect(hasPaginationSignal('<button>Show More</button>')).toBe(true);
+  });
+
+  it("detects 'more jobs' text (P5)", () => {
+    expect(hasPaginationSignal('<a href="/jobs?page=2">More Jobs</a>')).toBe(true);
+  });
+
+  it("detects 'view more jobs' text (P5)", () => {
+    expect(hasPaginationSignal('<a href="/jobs?page=2">View More Jobs</a>')).toBe(true);
+  });
+
+  it("detects pagination container class (P6)", () => {
+    expect(hasPaginationSignal('<div class="pagination"><span>1</span><a href="?page=2">2</a></div>')).toBe(true);
+  });
+
+  it("detects pagination container id (P6)", () => {
+    expect(hasPaginationSignal('<nav id="pagination-nav"></nav>')).toBe(true);
+  });
+
+  it("detects pager container class (P6)", () => {
+    expect(hasPaginationSignal('<div class="pager"><a href="?page=2">2</a></div>')).toBe(true);
+  });
+
+  it("detects paginator container class (P6)", () => {
+    expect(hasPaginationSignal('<nav class="paginator"><a href="?page=2">Next</a></nav>')).toBe(true);
+  });
+
+  it("detects showing N-M of T pattern (P7a)", () => {
+    expect(hasPaginationSignal("<p>Showing 1-10 of 50 jobs</p>")).toBe(true);
+  });
+
+  it("detects showing N to M of T pattern (P7b)", () => {
+    expect(hasPaginationSignal("<p>Showing 1 to 10 of 50 results</p>")).toBe(true);
+  });
+
+  it("detects page N of M pattern (P8)", () => {
+    expect(hasPaginationSignal("<p>Page 1 of 3</p>")).toBe(true);
+  });
+
+  it("is case-insensitive", () => {
+    expect(hasPaginationSignal("<button>LOAD MORE</button>")).toBe(true);
+    expect(hasPaginationSignal('<LINK REL="NEXT" HREF="/page2">')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pagination signal integration — fail-closed on incomplete enumeration
+//
+// Gate 2 conservative baseline: extraction never fetches or follows a page-2
+// URL. When an obvious pagination/incomplete-enumeration signal is present on
+// the fetched page, extraction returns completed=false with
+// PAGINATION_NOT_COMPLETED rather than attempting to enumerate further pages.
+// ---------------------------------------------------------------------------
+describe("extractJobs — pagination detection fails closed (no page-2 fetch)", () => {
+  it("A: GENERIC_HTTP with >= 3 jobs and no pagination signal returns completed=true", async () => {
+    mockHtmlExtraction(`
+      <a href="https://example.com/jobs/1">Software Engineer</a>
+      <a href="https://example.com/jobs/2">Backend Engineer</a>
+      <a href="https://example.com/jobs/3">Frontend Engineer</a>
+    `);
+
+    const result = await extractJobs(
+      "https://example.com/careers",
+      AtsType.UNKNOWN,
+      EXTRACTOR_USED.GENERIC_HTTP
+    );
+
+    expect(result.completed).toBe(true);
+    expect(result.failure_code).toBeUndefined();
+  });
+
+  it("B: pagination signal on first page returns completed=false with PAGINATION_NOT_COMPLETED and the required reason", async () => {
+    mockHtmlExtraction(`
+      <a href="https://example.com/jobs/1">Software Engineer</a>
+      <a href="https://example.com/jobs/2">Backend Engineer</a>
+      <a href="https://example.com/jobs/3">Frontend Engineer</a>
+      <button>Load More</button>
+    `);
+
+    const result = await extractJobs(
+      "https://example.com/careers",
+      AtsType.UNKNOWN,
+      EXTRACTOR_USED.GENERIC_HTTP
+    );
+
+    expect(result.completed).toBe(false);
+    expect(result.failure_code).toBe("PAGINATION_NOT_COMPLETED");
+    expect(result.failure_reason).toBe(
+      "pagination detected; additional pages were not searched"
+    );
+    expect(result.jobs.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("C: class=\"pagination\" returns completed=false with PAGINATION_NOT_COMPLETED", async () => {
+    mockHtmlExtraction(`
+      <nav class="pagination"><a href="https://example.com/careers?page=2">2</a></nav>
+      <a href="https://example.com/jobs/1">Software Engineer</a>
+      <a href="https://example.com/jobs/2">Backend Engineer</a>
+      <a href="https://example.com/jobs/3">Frontend Engineer</a>
+    `);
+
+    const result = await extractJobs(
+      "https://example.com/careers",
+      AtsType.UNKNOWN,
+      EXTRACTOR_USED.GENERIC_HTTP
+    );
+
+    expect(result.completed).toBe(false);
+    expect(result.failure_code).toBe("PAGINATION_NOT_COMPLETED");
+  });
+
+  it("D: class=\"pager\" returns completed=false with PAGINATION_NOT_COMPLETED", async () => {
+    mockHtmlExtraction(`
+      <div class="pager"><a href="https://example.com/careers?page=2">Next</a></div>
+      <a href="https://example.com/jobs/1">Software Engineer</a>
+      <a href="https://example.com/jobs/2">Backend Engineer</a>
+      <a href="https://example.com/jobs/3">Frontend Engineer</a>
+    `);
+
+    const result = await extractJobs(
+      "https://example.com/careers",
+      AtsType.UNKNOWN,
+      EXTRACTOR_USED.GENERIC_HTTP
+    );
+
+    expect(result.completed).toBe(false);
+    expect(result.failure_code).toBe("PAGINATION_NOT_COMPLETED");
+  });
+
+  it("E: class=\"paginator\" returns completed=false with PAGINATION_NOT_COMPLETED", async () => {
+    mockHtmlExtraction(`
+      <nav class="paginator"><a href="https://example.com/careers?page=2">Next</a></nav>
+      <a href="https://example.com/jobs/1">Software Engineer</a>
+      <a href="https://example.com/jobs/2">Backend Engineer</a>
+      <a href="https://example.com/jobs/3">Frontend Engineer</a>
+    `);
+
+    const result = await extractJobs(
+      "https://example.com/careers",
+      AtsType.UNKNOWN,
+      EXTRACTOR_USED.GENERIC_HTTP
+    );
+
+    expect(result.completed).toBe(false);
+    expect(result.failure_code).toBe("PAGINATION_NOT_COMPLETED");
+  });
+
+  it("F: rel=\"next\" returns completed=false with PAGINATION_NOT_COMPLETED", async () => {
+    mockHtmlExtraction(`
+      <link rel="next" href="https://example.com/careers?page=2">
+      <a href="https://example.com/jobs/1">Software Engineer</a>
+      <a href="https://example.com/jobs/2">Backend Engineer</a>
+      <a href="https://example.com/jobs/3">Frontend Engineer</a>
+    `);
+
+    const result = await extractJobs(
+      "https://example.com/careers",
+      AtsType.UNKNOWN,
+      EXTRACTOR_USED.GENERIC_HTTP
+    );
+
+    expect(result.completed).toBe(false);
+    expect(result.failure_code).toBe("PAGINATION_NOT_COMPLETED");
+  });
+
+  it("G: 'Load more' / 'Show more' returns completed=false with PAGINATION_NOT_COMPLETED", async () => {
+    mockHtmlExtraction(`
+      <a href="https://example.com/jobs/1">Software Engineer</a>
+      <a href="https://example.com/jobs/2">Backend Engineer</a>
+      <a href="https://example.com/jobs/3">Frontend Engineer</a>
+      <button>Show More</button>
+    `);
+
+    const result = await extractJobs(
+      "https://example.com/careers",
+      AtsType.UNKNOWN,
+      EXTRACTOR_USED.GENERIC_HTTP
+    );
+
+    expect(result.completed).toBe(false);
+    expect(result.failure_code).toBe("PAGINATION_NOT_COMPLETED");
+  });
+
+  it("H: 'showing 1-10 of 50' returns completed=false with PAGINATION_NOT_COMPLETED", async () => {
+    mockHtmlExtraction(`
+      <p>Showing 1-10 of 50 jobs</p>
+      <a href="https://example.com/jobs/1">Software Engineer</a>
+      <a href="https://example.com/jobs/2">Backend Engineer</a>
+      <a href="https://example.com/jobs/3">Frontend Engineer</a>
+    `);
+
+    const result = await extractJobs(
+      "https://example.com/careers",
+      AtsType.UNKNOWN,
+      EXTRACTOR_USED.GENERIC_HTTP
+    );
+
+    expect(result.completed).toBe(false);
+    expect(result.failure_code).toBe("PAGINATION_NOT_COMPLETED");
+  });
+
+  it("pagination signal on a page with zero jobs still returns completed=false (NO_LISTINGS_PARSED takes precedence)", async () => {
+    mockHtmlExtraction(`
+      <p>Showing 1-10 of 50 jobs</p>
+    `);
+
+    const result = await extractJobs(
+      "https://example.com/careers",
+      AtsType.UNKNOWN,
+      EXTRACTOR_USED.GENERIC_HTTP
+    );
+
+    expect(result.completed).toBe(false);
+    expect(["NO_LISTINGS_PARSED", "PAGINATION_NOT_COMPLETED"]).toContain(result.failure_code);
+  });
+
+  it("never fetches a second page even when a followable next-page URL is present", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => `
+        <link rel="next" href="https://example.com/careers?page=2">
+        <a href="https://example.com/jobs/1">Software Engineer</a>
+        <a href="https://example.com/jobs/2">Backend Engineer</a>
+        <a href="https://example.com/jobs/3">Frontend Engineer</a>
+      `,
+    } as Response);
+
+    const result = await extractJobs(
+      "https://example.com/careers",
+      AtsType.UNKNOWN,
+      EXTRACTOR_USED.GENERIC_HTTP
+    );
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(result.pages_visited).toBe(1);
+    expect(result.completed).toBe(false);
+    expect(result.failure_code).toBe("PAGINATION_NOT_COMPLETED");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pagination control exclusion from job listings (parseJobsFromHtml)
+// ---------------------------------------------------------------------------
+describe("parseJobsFromHtml — pagination controls not counted as jobs", () => {
+  // A: /careers/page/2 Next link is not a job.
+  it("A: <a href='/careers/page/2'>Next</a> inside pagination container is not a job listing", async () => {
+    mockHtmlExtraction(`
+      <nav class="pagination"><a href="https://example.com/careers/page/2">Next</a></nav>
+      <a href="https://example.com/careers/software-engineer-1">Software Engineer</a>
+      <a href="https://example.com/careers/backend-engineer-2">Backend Engineer</a>
+      <a href="https://example.com/careers/frontend-engineer-3">Frontend Engineer</a>
+    `);
+    const result = await extractJobs("https://example.com/careers", AtsType.UNKNOWN, EXTRACTOR_USED.GENERIC_HTTP);
+
+    // Exactly 3 real jobs; the Next link must not appear.
+    expect(result.jobs.length).toBe(3);
+    const urls = result.jobs.map((j) => j.url);
+    expect(urls).not.toContain("https://example.com/careers/page/2");
+    expect(result.listings_scanned).toBe(3);
+  });
+
+  // B: /jobs/page/2 Next link is not a job.
+  it("B: <a href='/jobs/page/2'>Next</a> inside pagination container is not a job listing", async () => {
+    mockHtmlExtraction(`
+      <nav class="pagination"><a href="https://example.com/jobs/page/2">Next</a></nav>
+      <a href="https://example.com/jobs/software-engineer-1">Software Engineer</a>
+      <a href="https://example.com/jobs/backend-engineer-2">Backend Engineer</a>
+      <a href="https://example.com/jobs/frontend-engineer-3">Frontend Engineer</a>
+    `);
+    const result = await extractJobs("https://example.com/jobs", AtsType.UNKNOWN, EXTRACTOR_USED.GENERIC_HTTP);
+
+    expect(result.jobs.length).toBe(3);
+    const urls = result.jobs.map((j) => j.url);
+    expect(urls).not.toContain("https://example.com/jobs/page/2");
+    expect(result.listings_scanned).toBe(3);
+  });
+
+  // E: Real job link /careers/software-engineer is still parsed as a job.
+  it("E: /careers/software-engineer is parsed as a real job (not filtered out)", async () => {
+    mockHtmlExtraction(`
+      <a href="https://example.com/careers/software-engineer">Software Engineer</a>
+      <a href="https://example.com/careers/backend-engineer">Backend Engineer</a>
+      <a href="https://example.com/careers/frontend-engineer">Frontend Engineer</a>
+    `);
+    const result = await extractJobs("https://example.com/careers", AtsType.UNKNOWN, EXTRACTOR_USED.GENERIC_HTTP);
+
+    expect(result.jobs.length).toBe(3);
+    expect(result.jobs.map((j) => j.url)).toContain("https://example.com/careers/software-engineer");
+  });
+
+  // E2: Numeric job detail URLs are valid job links — not excluded from job parsing.
+  it("E2: /jobs/12345 and /careers/12345 still parse as real job links", async () => {
+    mockHtmlExtraction(`
+      <a href="https://example.com/jobs/12345">Software Engineer</a>
+      <a href="https://example.com/careers/67890">Backend Engineer</a>
+      <a href="https://example.com/openings/11111">Frontend Engineer</a>
+    `);
+    const result = await extractJobs("https://example.com/jobs", AtsType.UNKNOWN, EXTRACTOR_USED.GENERIC_HTTP);
+
+    expect(result.jobs.length).toBe(3);
+    const urls = result.jobs.map((j) => j.url);
+    expect(urls).toContain("https://example.com/jobs/12345");
+    expect(urls).toContain("https://example.com/careers/67890");
+    expect(urls).toContain("https://example.com/openings/11111");
+  });
+
+  // F: listings_scanned is honest — does not include pagination controls.
+  it("F: listings_scanned does not count the Next pagination link", async () => {
+    mockHtmlExtraction(`
+      <nav class="pagination"><a href="https://example.com/careers/page/2">Next</a></nav>
+      <a href="https://example.com/careers/software-engineer-1">Software Engineer</a>
+      <a href="https://example.com/careers/backend-engineer-2">Backend Engineer</a>
+      <a href="https://example.com/careers/frontend-engineer-3">Frontend Engineer</a>
+    `);
+    const result = await extractJobs("https://example.com/careers", AtsType.UNKNOWN, EXTRACTOR_USED.GENERIC_HTTP);
+
+    // listings_scanned must equal the job count — not inflated by the Next link.
+    expect(result.listings_scanned).toBe(result.jobs.length);
+    expect(result.listings_scanned).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pagination signal with computeFinalStatus — must produce UNVERIFIED
+// ---------------------------------------------------------------------------
+describe("pagination signal forces UNVERIFIED through computeFinalStatus", () => {
+  it("completed=false with PAGINATION_NOT_COMPLETED and strong resolution → UNVERIFIED", () => {
+    const result = computeFinalStatus({
+      careersUrl: "https://example.com/careers",
+      extraction: {
+        completed: false,
+        failure_code: "PAGINATION_NOT_COMPLETED",
+        failure_reason: "pagination signal detected but no followable next-page URL found",
+      },
+      matchCount: 0,
+      resolutionMethod: "DIRECT_VERIFIED",
+    });
+
+    expect(result.computed_status).toBe("UNVERIFIED");
+    expect(result.failure_code).toBe("PAGINATION_NOT_COMPLETED");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Step 8.4 explicit: completed=false never produces MATCHES_FOUND
 // ---------------------------------------------------------------------------
 // The existing tests exercise completed=false with matchCount=0 only.
@@ -618,5 +992,64 @@ describe("computeFinalStatus — completed=false always yields UNVERIFIED regard
       resolutionMethod: null,
     });
     expect(result.computed_status).toBe("UNVERIFIED");
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// J: computeFinalStatus preserves/carries through PAGINATION_NOT_COMPLETED
+// ---------------------------------------------------------------------------
+describe("computeFinalStatus — pagination lifecycle (single-page, fail-closed)", () => {
+  it("J1: completed=true with matches → MATCHES_FOUND", () => {
+    const result = computeFinalStatus({
+      careersUrl: "https://example.com/careers",
+      extraction: { completed: true },
+      matchCount: 2,
+      resolutionMethod: "DIRECT_VERIFIED",
+    });
+    expect(result.computed_status).toBe("MATCHES_FOUND");
+  });
+
+  it("J2: completed=true with no matches → NO_MATCH_SCAN_COMPLETED", () => {
+    const result = computeFinalStatus({
+      careersUrl: "https://example.com/careers",
+      extraction: { completed: true },
+      matchCount: 0,
+      resolutionMethod: "DIRECT_VERIFIED",
+    });
+    expect(result.computed_status).toBe("NO_MATCH_SCAN_COMPLETED");
+  });
+
+  it("J3: pagination detected → UNVERIFIED, not NO_MATCH_SCAN_COMPLETED, with failure_code and failure_reason preserved", () => {
+    const result = computeFinalStatus({
+      careersUrl: "https://example.com/careers",
+      extraction: {
+        completed: false,
+        failure_code: "PAGINATION_NOT_COMPLETED",
+        failure_reason: "pagination detected; additional pages were not searched",
+      },
+      matchCount: 0,
+      resolutionMethod: "DIRECT_VERIFIED",
+    });
+    expect(result.computed_status).toBe("UNVERIFIED");
+    expect(result.failure_code).toBe("PAGINATION_NOT_COMPLETED");
+    expect(result.failure_reason).toBe(
+      "pagination detected; additional pages were not searched"
+    );
+  });
+
+  it("J4: pagination detected with matchCount > 0 still → UNVERIFIED, never MATCHES_FOUND", () => {
+    const result = computeFinalStatus({
+      careersUrl: "https://example.com/careers",
+      extraction: {
+        completed: false,
+        failure_code: "PAGINATION_NOT_COMPLETED",
+        failure_reason: "pagination detected; additional pages were not searched",
+      },
+      matchCount: 5,
+      resolutionMethod: "DIRECT_VERIFIED",
+    });
+    expect(result.computed_status).toBe("UNVERIFIED");
+    expect(result.failure_code).toBe("PAGINATION_NOT_COMPLETED");
   });
 });
