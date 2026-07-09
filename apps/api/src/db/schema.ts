@@ -55,8 +55,25 @@ export function ensureSchema(db: InstanceType<typeof Database>): void {
       created_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS job_details (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      company_id TEXT NOT NULL,
+      job_row_id TEXT NOT NULL,
+      job_url TEXT NOT NULL,
+      description_text TEXT NULL,
+      fetched_at INTEGER NULL,
+      failure_code TEXT NULL,
+      failure_reason TEXT NULL,
+      created_at INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_run_companies_run_id ON run_companies(run_id);
     CREATE INDEX IF NOT EXISTS idx_run_companies_status ON run_companies(status);
     CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_job_details_job_row_id_unique ON job_details(job_row_id);
+    CREATE INDEX IF NOT EXISTS idx_job_details_run_id ON job_details(run_id);
+    CREATE INDEX IF NOT EXISTS idx_job_details_company_id ON job_details(company_id);
   `);
 }

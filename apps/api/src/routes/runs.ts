@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { CompanyStatus, RunStatus } from "@surveyor/shared";
-import type { JobRowResponse, RunCompanyResponse, RunDetailResponse, RunResponse } from "@surveyor/shared";
+import type { RunCompanyResponse, RunDetailResponse, RunResponse } from "@surveyor/shared";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/db.js";
 
@@ -161,7 +161,7 @@ runsRouter.get("/api/runs/:runId", (req, res) => {
     )
     .all(runId) as RunCompanyResponse[];
 
-  const matchedJobs = db
+  const matchedJobRows = db
     .prepare(
       `
       SELECT
@@ -171,14 +171,47 @@ runsRouter.get("/api/runs/:runId", (req, res) => {
         job_rows.title,
         job_rows.location,
         job_rows.url,
-        job_rows.match_reason
+        job_rows.match_reason,
+        job_details.description_text AS detail_description_text,
+        job_details.failure_code AS detail_failure_code,
+        job_details.failure_reason AS detail_failure_reason
       FROM job_rows
       JOIN run_companies ON run_companies.id = job_rows.company_id
+      LEFT JOIN job_details ON job_details.job_row_id = job_rows.id
       WHERE job_rows.run_id = ?
       ORDER BY run_companies.input_index ASC, job_rows.id ASC
       `
     )
-    .all(runId) as JobRowResponse[];
+    .all(runId) as {
+      id: string;
+      run_id: string;
+      company_id: string;
+      title: string;
+      location: string | null;
+      url: string;
+      match_reason: string;
+      detail_description_text: string | null;
+      detail_failure_code: string | null;
+      detail_failure_reason: string | null;
+    }[];
+
+  const matchedJobs = matchedJobRows.map((row) => {
+    const jobDetailAvailable =
+      typeof row.detail_description_text === "string" &&
+      row.detail_description_text.length > 0;
+    return {
+      id: row.id,
+      run_id: row.run_id,
+      company_id: row.company_id,
+      title: row.title,
+      location: row.location,
+      url: row.url,
+      match_reason: row.match_reason,
+      job_detail_available: jobDetailAvailable,
+      job_detail_failure_code: jobDetailAvailable ? null : row.detail_failure_code,
+      job_detail_failure_reason: jobDetailAvailable ? null : row.detail_failure_reason,
+    };
+  });
 
   const run: RunResponse = {
     id: runRow.id,

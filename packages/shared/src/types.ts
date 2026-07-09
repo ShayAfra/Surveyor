@@ -39,10 +39,22 @@ export interface JobRowResponse {
   location: string | null;
   url: string;
   match_reason: string;
+  job_detail_available: boolean;
+  job_detail_failure_code: string | null;
+  job_detail_failure_reason: string | null;
 }
 
 export interface RunDetailResponse {
   run: RunResponse;
   companies: RunCompanyResponse[];
   matched_jobs: JobRowResponse[];
+}
+
+export interface JobDetailResponse {
+  job_row_id: string;
+  job_url: string;
+  description_text: string | null;
+  failure_code: string | null;
+  failure_reason: string | null;
+  fetched_at: number | null;
 }

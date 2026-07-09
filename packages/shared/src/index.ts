@@ -1,5 +1,6 @@
 export { AtsType, CompanyStatus, RunStatus } from "./constants.js";
 export type {
+  JobDetailResponse,
   JobRowResponse,
   RoleSpec,
   RoleSpecSeniority,

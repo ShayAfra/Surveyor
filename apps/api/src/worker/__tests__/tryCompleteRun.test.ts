@@ -39,6 +39,36 @@ function insertCompany(id: string, runId: string, status: string, inputIndex = 0
   }
 }
 
+function insertJobRow(id: string, runId: string, companyId: string): void {
+  db.prepare(
+    `INSERT INTO job_rows (id, run_id, company_id, title, location, url, match_reason)
+     VALUES (?, ?, ?, 'Software Engineer', 'Remote', ?, 'Matched inclusion phrase Software Engineer')`,
+  ).run(id, runId, companyId, `https://example.com/jobs/${id}`);
+}
+
+function insertJobDetail(
+  jobRowId: string,
+  runId: string,
+  companyId: string,
+  opts: { description_text?: string | null; failure_code?: string | null; failure_reason?: string | null } = {},
+): void {
+  db.prepare(
+    `INSERT INTO job_details (id, run_id, company_id, job_row_id, job_url, description_text, fetched_at, failure_code, failure_reason, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    randomUUID(),
+    runId,
+    companyId,
+    jobRowId,
+    `https://example.com/jobs/${jobRowId}`,
+    opts.description_text ?? null,
+    Date.now(),
+    opts.failure_code ?? null,
+    opts.failure_reason ?? null,
+    Date.now(),
+  );
+}
+
 function runStatus(runId: string): string {
   return (db.prepare("SELECT status FROM runs WHERE id = ?").get(runId) as { status: string }).status;
 }
@@ -66,6 +96,8 @@ afterEach(() => {
   const ids = [runId, ...extraRunIds.splice(0)];
   for (const id of ids) {
     db.prepare("DELETE FROM trace_events WHERE run_id = ?").run(id);
+    db.prepare("DELETE FROM job_details WHERE run_id = ?").run(id);
+    db.prepare("DELETE FROM job_rows WHERE run_id = ?").run(id);
     db.prepare("DELETE FROM run_companies WHERE run_id = ?").run(id);
     db.prepare("DELETE FROM runs WHERE id = ?").run(id);
   }
@@ -195,5 +227,126 @@ describe("tryCompleteRunsForReadyOrRunning — completes all eligible runs", () 
     tryCompleteRunsForReadyOrRunning();
 
     expect(runStatus(runId)).toBe("RUNNING");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gate 3 lifecycle fix: run completion must wait for job_details evidence
+// ---------------------------------------------------------------------------
+
+describe("tryCompleteRun — waits for job_details rows before completing", () => {
+  it("does not complete when all companies are final but a job_row has no job_details row", () => {
+    insertRun(runId, "RUNNING");
+    const companyId = randomUUID();
+    insertCompany(companyId, runId, "MATCHES_FOUND");
+    insertJobRow(randomUUID(), runId, companyId);
+
+    tryCompleteRun(runId);
+
+    expect(runStatus(runId)).toBe("RUNNING");
+  });
+
+  it("tryCompleteRunsForReadyOrRunning does not complete when a job_row has no job_details row", () => {
+    insertRun(runId, "RUNNING");
+    const companyId = randomUUID();
+    insertCompany(companyId, runId, "MATCHES_FOUND");
+    insertJobRow(randomUUID(), runId, companyId);
+
+    tryCompleteRunsForReadyOrRunning();
+
+    expect(runStatus(runId)).toBe("RUNNING");
+  });
+
+  it("completes once every job_row in the run has a job_details row", () => {
+    insertRun(runId, "RUNNING");
+    const companyId = randomUUID();
+    insertCompany(companyId, runId, "MATCHES_FOUND");
+    const jobRowId = randomUUID();
+    insertJobRow(jobRowId, runId, companyId);
+    insertJobDetail(jobRowId, runId, companyId, { description_text: "full description" });
+
+    tryCompleteRun(runId);
+
+    expect(runStatus(runId)).toBe("COMPLETED");
+  });
+
+  it("a job_details row with non-empty description_text counts as complete", () => {
+    insertRun(runId, "RUNNING");
+    const companyId = randomUUID();
+    insertCompany(companyId, runId, "MATCHES_FOUND");
+    const jobRowId = randomUUID();
+    insertJobRow(jobRowId, runId, companyId);
+    insertJobDetail(jobRowId, runId, companyId, { description_text: "great role" });
+
+    tryCompleteRun(runId);
+
+    expect(runStatus(runId)).toBe("COMPLETED");
+  });
+
+  it("a job_details row with null description_text and a failure_code counts as complete", () => {
+    insertRun(runId, "RUNNING");
+    const companyId = randomUUID();
+    insertCompany(companyId, runId, "MATCHES_FOUND");
+    const jobRowId = randomUUID();
+    insertJobRow(jobRowId, runId, companyId);
+    insertJobDetail(jobRowId, runId, companyId, {
+      description_text: null,
+      failure_code: "JOB_DETAIL_FETCH_FAILED",
+      failure_reason: "fetch failed",
+    });
+
+    tryCompleteRun(runId);
+
+    expect(runStatus(runId)).toBe("COMPLETED");
+  });
+
+  it("a run with NO_MATCH_SCAN_COMPLETED companies and zero job_rows still completes normally", () => {
+    insertRun(runId, "RUNNING");
+    insertCompany(randomUUID(), runId, "NO_MATCH_SCAN_COMPLETED");
+
+    tryCompleteRun(runId);
+
+    expect(runStatus(runId)).toBe("COMPLETED");
+  });
+
+  it("a run with UNVERIFIED companies and zero job_rows still completes normally", () => {
+    insertRun(runId, "RUNNING");
+    insertCompany(randomUUID(), runId, "UNVERIFIED");
+
+    tryCompleteRun(runId);
+
+    expect(runStatus(runId)).toBe("COMPLETED");
+  });
+
+  it("a mixed run waits for MATCHES_FOUND job_rows to have job_details rows before completing", () => {
+    insertRun(runId, "RUNNING");
+    const matchesCompanyId = randomUUID();
+    insertCompany(matchesCompanyId, runId, "MATCHES_FOUND", 0);
+    insertCompany(randomUUID(), runId, "NO_MATCH_SCAN_COMPLETED", 1);
+    const jobRowId = randomUUID();
+    insertJobRow(jobRowId, runId, matchesCompanyId);
+
+    tryCompleteRun(runId);
+    expect(runStatus(runId)).toBe("RUNNING");
+
+    insertJobDetail(jobRowId, runId, matchesCompanyId, { description_text: "role details" });
+    tryCompleteRun(runId);
+    expect(runStatus(runId)).toBe("COMPLETED");
+  });
+
+  it("global sweep race: run stays open until job_details rows exist, then completes on next sweep", () => {
+    insertRun(runId, "RUNNING");
+    const companyId = randomUUID();
+    insertCompany(companyId, runId, "MATCHES_FOUND");
+    const jobRowId = randomUUID();
+    insertJobRow(jobRowId, runId, companyId);
+
+    tryCompleteRunsForReadyOrRunning();
+    expect(runStatus(runId)).toBe("RUNNING");
+
+    insertJobDetail(jobRowId, runId, companyId, { description_text: "role details" });
+
+    tryCompleteRunsForReadyOrRunning();
+    expect(runStatus(runId)).toBe("COMPLETED");
   });
 });

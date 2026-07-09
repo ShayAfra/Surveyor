@@ -105,6 +105,9 @@ function makeJob(id: string, companyId: string, overrides: Partial<JobRowRespons
     location: "Remote",
     url: "https://example.com/jobs/1",
     match_reason: "Matched inclusion phrase Software Engineer",
+    job_detail_available: false,
+    job_detail_failure_code: null,
+    job_detail_failure_reason: null,
     ...overrides,
   };
 }

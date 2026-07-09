@@ -24,6 +24,7 @@ import {
   type FinalizePersistInput,
 } from "../lib/finalizeCompany.js";
 import { tryCompleteRun } from "./tryCompleteRun.js";
+import { ingestJobDetailsForCompany } from "../lib/jobDetailIngestion.js";
 
 function deriveCompletionReason(extraction: { completed: boolean; failure_code?: string; jobs?: { length: number } }): string {
   if (extraction.completed) {
@@ -118,11 +119,36 @@ function parseRoleSpec(json: string): RoleSpec | null {
   }
 }
 
-function finalizeAndCompleteRun(input: FinalizePersistInput): void {
+/**
+ * Gate 3 (agentReadiness.md Step 3.3): job detail ingestion runs after the
+ * finalization transaction has committed, and only for MATCHES_FOUND
+ * companies, before tryCompleteRun so a run cannot reach COMPLETED while
+ * matched jobs still lack a job_details row. Ingestion failures must never
+ * change company status — any unexpected error here is swallowed so it
+ * cannot reprocess or corrupt already-finalized company state.
+ */
+async function finalizeAndCompleteRun(input: FinalizePersistInput): Promise<void> {
   const ok = persistFinalizeCompany(input);
-  if (ok) {
-    tryCompleteRun(input.run_id);
+  if (!ok) {
+    return;
   }
+
+  if (input.computed_status === CompanyStatus.MATCHES_FOUND) {
+    try {
+      await ingestJobDetailsForCompany(input.run_id, input.run_company_id);
+    } catch (error) {
+      writeTraceEvent({
+        run_id: input.run_id,
+        run_company_id: input.run_company_id,
+        event_type: "job_detail_fetch_finished",
+        message: "job detail ingestion threw an unexpected error",
+        payload_json: JSON.stringify(serializeErrorForTrace(error)),
+        created_at: Date.now(),
+      });
+    }
+  }
+
+  tryCompleteRun(input.run_id);
 }
 
 async function runTracedExtractorAttempt(args: {
@@ -496,7 +522,7 @@ async function runExtractionStage(args: {
   return { extraction, finalExtractorUsed };
 }
 
-function runMatchingAndFinalizationStage(args: {
+async function runMatchingAndFinalizationStage(args: {
   run_id: string;
   run_company_id: string;
   worker_token: string;
@@ -506,7 +532,7 @@ function runMatchingAndFinalizationStage(args: {
   detectedPlatform: AtsType;
   finalExtractorUsed: string;
   extraction: ExtractJobsResult;
-}): void {
+}): Promise<void> {
   const {
     run_id,
     run_company_id,
@@ -571,7 +597,7 @@ function runMatchingAndFinalizationStage(args: {
     return;
   }
 
-  finalizeAndCompleteRun({
+  await finalizeAndCompleteRun({
     run_id,
     run_company_id,
     worker_token,
@@ -639,7 +665,7 @@ export async function processClaimedCompany(args: {
       discoveryFailureCode === "CAREERS_PAGE_UNVERIFIED"
         ? "careers page candidates were found but none passed deterministic verification"
         : "no authoritative careers URL could be discovered";
-    finalizeAndCompleteRun({
+    await finalizeAndCompleteRun({
       run_id,
       run_company_id,
       worker_token,
@@ -723,7 +749,7 @@ export async function processClaimedCompany(args: {
       // Resolution method forwarded so C5.1 can assert no weak resolution produces NO_MATCH.
       resolutionMethod: discoveryResolutionMethod,
     });
-    finalizeAndCompleteRun({
+    await finalizeAndCompleteRun({
       run_id,
       run_company_id,
       worker_token,
@@ -790,7 +816,7 @@ export async function processClaimedCompany(args: {
   const { extraction, finalExtractorUsed } = extractionResult;
 
   // Stage 5: Matching and finalization
-  runMatchingAndFinalizationStage({
+  await runMatchingAndFinalizationStage({
     run_id,
     run_company_id,
     worker_token,
