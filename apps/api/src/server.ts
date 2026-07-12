@@ -6,6 +6,7 @@ import { runsRouter } from "./routes/runs.js";
 import { jobDetailsRouter } from "./routes/jobDetails.js";
 import { authRouter } from "./routes/auth.js";
 import { profileRouter } from "./routes/profile.js";
+import { fitAnalysisRouter } from "./routes/fitAnalysis.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? "3000");
@@ -15,6 +16,7 @@ app.use(authRouter);
 app.use(runsRouter);
 app.use(jobDetailsRouter);
 app.use(profileRouter);
+app.use(fitAnalysisRouter);
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });

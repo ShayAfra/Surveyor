@@ -1,4 +1,4 @@
-import type { AtsType, CompanyStatus, ProfileItemType, RunStatus } from "./constants.js";
+import type { AtsType, CompanyStatus, FitAnalysisStatus, ProfileItemType, RunStatus } from "./constants.js";
 
 export type RoleSpecSeniority = "any" | "junior" | "mid" | "senior";
 
@@ -93,3 +93,26 @@ export interface ProfileMemoryResponse {
   items: UserProfileItemResponse[];
   resume: ResumeMemoryResponse | null;
 }
+
+export interface FitAnalysisEvidenceItem {
+  text: string;
+  evidence: string;
+}
+
+export interface FitAnalysisResponse {
+  id: string;
+  job_row_id: string;
+  status: FitAnalysisStatus;
+  fit_summary: string | null;
+  strengths: FitAnalysisEvidenceItem[] | null;
+  gaps: FitAnalysisEvidenceItem[] | null;
+  risks: FitAnalysisEvidenceItem[] | null;
+  suggested_next_steps: FitAnalysisEvidenceItem[] | null;
+  caveats: string[] | null;
+  model_name: string | null;
+  failure_code: string | null;
+  failure_reason: string | null;
+  created_at: number;
+}
+
+export type FitAnalysisListResponse = FitAnalysisResponse[];

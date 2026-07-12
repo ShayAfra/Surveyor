@@ -37,3 +37,11 @@ export const ProfileItemType = {
 } as const;
 
 export type ProfileItemType = (typeof ProfileItemType)[keyof typeof ProfileItemType];
+
+/** Local to job_fit_analyses. Not a scanner run/company status. */
+export const FitAnalysisStatus = {
+  COMPLETED: "COMPLETED",
+  FAILED: "FAILED",
+} as const;
+
+export type FitAnalysisStatus = (typeof FitAnalysisStatus)[keyof typeof FitAnalysisStatus];

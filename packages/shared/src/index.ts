@@ -1,5 +1,8 @@
-export { AtsType, CompanyStatus, ProfileItemType, RunStatus } from "./constants.js";
+export { AtsType, CompanyStatus, FitAnalysisStatus, ProfileItemType, RunStatus } from "./constants.js";
 export type {
+  FitAnalysisEvidenceItem,
+  FitAnalysisListResponse,
+  FitAnalysisResponse,
   JobDetailResponse,
   JobRowResponse,
   ProfileMemoryResponse,

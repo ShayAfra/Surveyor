@@ -132,6 +132,26 @@ export function ensureSchema(db: InstanceType<typeof Database>): void {
     );
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_resumes_user_id_unique ON resumes(user_id);
+
+    CREATE TABLE IF NOT EXISTS job_fit_analyses (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      job_row_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      fit_summary TEXT NULL,
+      strengths_json TEXT NULL,
+      gaps_json TEXT NULL,
+      risks_json TEXT NULL,
+      suggested_next_steps_json TEXT NULL,
+      evidence_snapshot_json TEXT NOT NULL,
+      model_name TEXT NULL,
+      failure_code TEXT NULL,
+      failure_reason TEXT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_job_fit_analyses_user_id ON job_fit_analyses(user_id);
+    CREATE INDEX IF NOT EXISTS idx_job_fit_analyses_job_row_id ON job_fit_analyses(job_row_id);
   `);
 
   ensureRunsUserIdColumn(db);

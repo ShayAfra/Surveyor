@@ -1,4 +1,9 @@
-import type { JobRowResponse, RunCompanyResponse, RunDetailResponse } from "@surveyor/shared";
+import type {
+  FitAnalysisResponse,
+  JobRowResponse,
+  RunCompanyResponse,
+  RunDetailResponse,
+} from "@surveyor/shared";
 import { CompanyStatus, RunStatus } from "@surveyor/shared";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
@@ -349,6 +354,163 @@ function CompanyEvidence({ company }: { company: RunCompanyResponse }) {
   );
 }
 
+function EvidenceItemList({ items }: { items: { text: string; evidence: string }[] }) {
+  if (items.length === 0) {
+    return <p>None noted.</p>;
+  }
+  return (
+    <ul>
+      {items.map((item, i) => (
+        <li key={i}>
+          {item.text} <em>({item.evidence})</em>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Fetches, generates, and displays fit analyses for one matched job. Minimal, additive to the run view. */
+function JobFitAnalysis({ jobRowId, onLoggedOut }: { jobRowId: string; onLoggedOut: () => void }) {
+  const [analyses, setAnalyses] = useState<FitAnalysisResponse[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  async function loadAnalyses() {
+    try {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobRowId)}/fit-analysis`);
+      if (res.status === 401) {
+        onLoggedOut();
+        return;
+      }
+      if (!res.ok) {
+        setError(`Request failed (${res.status})`);
+        return;
+      }
+      setAnalyses((await res.json()) as FitAnalysisResponse[]);
+    } catch {
+      setError("Network error");
+    }
+  }
+
+  useEffect(() => {
+    if (expanded && analyses === null) {
+      void loadAnalyses();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded]);
+
+  async function handleAnalyze() {
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobRowId)}/fit-analysis`, {
+        method: "POST",
+      });
+      if (res.status === 401) {
+        onLoggedOut();
+        return;
+      }
+      const data: unknown = await res.json().catch(() => null);
+      const body = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+      if (!res.ok) {
+        const msg =
+          typeof body.error === "string" ? body.error : `Request failed (${res.status})`;
+        setError(msg);
+        return;
+      }
+      await loadAnalyses();
+    } catch {
+      setError("Network error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDelete(analysisId: string) {
+    const res = await fetch(`/api/fit-analyses/${encodeURIComponent(analysisId)}`, {
+      method: "DELETE",
+    });
+    if (res.status === 401) {
+      onLoggedOut();
+      return;
+    }
+    await loadAnalyses();
+  }
+
+  const latest = analyses && analyses.length > 0 ? analyses[0] : null;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {expanded ? "Hide fit analysis" : "Analyze fit"}
+      </button>
+      {expanded && (
+        <div style={{ marginLeft: "1rem", marginTop: "0.5rem" }}>
+          <button type="button" onClick={handleAnalyze} disabled={loading}>
+            {loading ? "Analyzing…" : "Generate new analysis"}
+          </button>
+          {error != null && <p role="alert">{error}</p>}
+
+          {latest && (
+            <div>
+              {latest.status === "FAILED" ? (
+                <p role="alert">
+                  Analysis attempt failed: {latest.failure_reason ?? latest.failure_code ?? "unknown error"}
+                </p>
+              ) : (
+                <>
+                  <p>{latest.fit_summary}</p>
+                  {latest.caveats && latest.caveats.length > 0 && (
+                    <p>
+                      <strong>Caveats:</strong> {latest.caveats.join(" ")}
+                    </p>
+                  )}
+                  <h4>Strengths</h4>
+                  <EvidenceItemList items={latest.strengths ?? []} />
+                  <h4>Gaps</h4>
+                  <EvidenceItemList items={latest.gaps ?? []} />
+                  <h4>Risks</h4>
+                  <EvidenceItemList items={latest.risks ?? []} />
+                  <h4>Suggested next steps</h4>
+                  <EvidenceItemList items={latest.suggested_next_steps ?? []} />
+                </>
+              )}
+              <button type="button" onClick={() => handleDelete(latest.id)}>
+                Delete this analysis
+              </button>
+            </div>
+          )}
+
+          {analyses != null && analyses.length === 0 && <p>No fit analysis yet.</p>}
+
+          {error != null && error.toLowerCase().includes("no usable profile or resume") && (
+            <p>
+              <Link to="/profile">Add profile or resume information</Link> to enable fit analysis.
+            </p>
+          )}
+
+          {analyses != null && analyses.length > 1 && (
+            <details>
+              <summary>Previous analyses ({analyses.length - 1})</summary>
+              <ul>
+                {analyses.slice(1).map((a) => (
+                  <li key={a.id}>
+                    {new Date(a.created_at).toLocaleString()} — {a.status}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RunDetailPage({ onLoggedOut }: { onLoggedOut: () => void }) {
   const { id } = useParams();
   const [detail, setDetail] = useState<RunDetailResponse | null>(null);
@@ -551,6 +713,7 @@ function RunDetailPage({ onLoggedOut }: { onLoggedOut: () => void }) {
                                 </a>
                                 {j.location != null && j.location !== "" && ` · ${j.location}`}
                                 {j.match_reason && ` · ${j.match_reason}`}
+                                <JobFitAnalysis jobRowId={j.id} onLoggedOut={onLoggedOut} />
                               </li>
                             ))}
                           </ul>
