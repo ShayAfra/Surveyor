@@ -4,13 +4,17 @@ import { runRestartRecovery } from "./worker/restartRecovery.js";
 import { startWorkerLoop } from "./worker/startWorkerLoop.js";
 import { runsRouter } from "./routes/runs.js";
 import { jobDetailsRouter } from "./routes/jobDetails.js";
+import { authRouter } from "./routes/auth.js";
+import { profileRouter } from "./routes/profile.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? "3000");
 
 app.use(express.json());
+app.use(authRouter);
 app.use(runsRouter);
 app.use(jobDetailsRouter);
+app.use(profileRouter);
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });

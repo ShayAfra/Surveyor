@@ -28,3 +28,12 @@ export const AtsType = {
 } as const;
 
 export type AtsType = (typeof AtsType)[keyof typeof AtsType];
+
+export const ProfileItemType = {
+  WORK_HISTORY: "WORK_HISTORY",
+  PROJECT: "PROJECT",
+  SKILL: "SKILL",
+  EDUCATION: "EDUCATION",
+} as const;
+
+export type ProfileItemType = (typeof ProfileItemType)[keyof typeof ProfileItemType];

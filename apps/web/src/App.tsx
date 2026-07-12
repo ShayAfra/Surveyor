@@ -2,20 +2,127 @@ import type { JobRowResponse, RunCompanyResponse, RunDetailResponse } from "@sur
 import { CompanyStatus, RunStatus } from "@surveyor/shared";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { Route, Routes, useNavigate, useParams } from "react-router-dom";
+import { Link, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import {
   exportCombinedCsv,
   exportMatchesCsv,
   exportNoMatchCsv,
   exportUnverifiedCsv,
 } from "./csvExport.js";
+import ProfilePage from "./ProfilePage.js";
 
 type HealthState =
   | { status: "loading" }
   | { status: "ok"; body: { ok: boolean } }
   | { status: "error"; message: string };
 
-function HomePage() {
+interface AuthUser {
+  id: string;
+  email: string;
+  created_at: number;
+}
+
+type AuthGateState =
+  | { status: "loading" }
+  | { status: "authenticated"; user: AuthUser }
+  | { status: "unauthenticated" };
+
+async function fetchCurrentUser(): Promise<AuthUser | null> {
+  const res = await fetch("/api/auth/me");
+  if (res.status === 401) {
+    return null;
+  }
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  return (await res.json()) as AuthUser;
+}
+
+function LoginPage({ onAuthenticated }: { onAuthenticated: (user: AuthUser) => void }) {
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+
+    try {
+      const res = await fetch(mode === "login" ? "/api/auth/login" : "/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data: unknown = await res.json().catch(() => null);
+      const body = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+
+      if (!res.ok) {
+        const msg =
+          typeof body.error === "string" ? body.error : `Request failed (${res.status})`;
+        setError(msg);
+        return;
+      }
+
+      onAuthenticated(body as unknown as AuthUser);
+    } catch {
+      setError("Network error");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main>
+      <h1>Surveyor</h1>
+      <section aria-labelledby="auth-heading">
+        <h2 id="auth-heading">{mode === "login" ? "Log in" : "Sign up"}</h2>
+        <form onSubmit={handleSubmit}>
+          <div>
+            <label htmlFor="auth-email">Email</label>
+            <input
+              id="auth-email"
+              name="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="username"
+            />
+          </div>
+          <div>
+            <label htmlFor="auth-password">Password</label>
+            <input
+              id="auth-password"
+              name="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete={mode === "login" ? "current-password" : "new-password"}
+            />
+          </div>
+          {error && <p role="alert">{error}</p>}
+          <button type="submit" disabled={submitting}>
+            {submitting ? "Submitting…" : mode === "login" ? "Log in" : "Sign up"}
+          </button>
+        </form>
+        <button
+          type="button"
+          onClick={() => {
+            setMode(mode === "login" ? "signup" : "login");
+            setError(null);
+          }}
+        >
+          {mode === "login" ? "Need an account? Sign up" : "Already have an account? Log in"}
+        </button>
+      </section>
+    </main>
+  );
+}
+
+function HomePage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () => void }) {
   const navigate = useNavigate();
   const [health, setHealth] = useState<HealthState>({ status: "loading" });
   const [role, setRole] = useState("");
@@ -85,6 +192,11 @@ function HomePage() {
         }),
       });
 
+      if (res.status === 401) {
+        onLoggedOut();
+        return;
+      }
+
       const data: unknown = await res.json().catch(() => null);
       const body = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
 
@@ -109,9 +221,23 @@ function HomePage() {
     }
   }
 
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    onLoggedOut();
+  }
+
   return (
     <main>
-      <h1>Surveyor</h1>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h1>Surveyor</h1>
+        <div>
+          <span>{user.email}</span>{" "}
+          <Link to="/profile">Profile</Link>{" "}
+          <button type="button" onClick={handleLogout}>
+            Log out
+          </button>
+        </div>
+      </div>
       <p>Web app is running.</p>
       {health.status === "loading" && <p>Checking API…</p>}
       {health.status === "ok" && (
@@ -223,7 +349,7 @@ function CompanyEvidence({ company }: { company: RunCompanyResponse }) {
   );
 }
 
-function RunDetailPage() {
+function RunDetailPage({ onLoggedOut }: { onLoggedOut: () => void }) {
   const { id } = useParams();
   const [detail, setDetail] = useState<RunDetailResponse | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
@@ -260,6 +386,21 @@ function RunDetailPage() {
     async function poll() {
       try {
         const res = await fetch(`/api/runs/${encodeURIComponent(runId)}`);
+
+        if (res.status === 401) {
+          if (!cancelled) {
+            onLoggedOut();
+          }
+          return;
+        }
+
+        if (res.status === 404) {
+          if (!cancelled) {
+            setPollError("Run not found");
+          }
+          return;
+        }
+
         if (!res.ok) {
           if (!cancelled) {
             setPollError(`Request failed (${res.status})`);
@@ -285,7 +426,7 @@ function RunDetailPage() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [id]);
+  }, [id, onLoggedOut]);
 
   const pendingInProgress = sortedCompanies.filter(
     (c) => c.status === CompanyStatus.PENDING || c.status === CompanyStatus.IN_PROGRESS,
@@ -456,10 +597,52 @@ function RunDetailPage() {
 }
 
 export default function App() {
+  const [authState, setAuthState] = useState<AuthGateState>({ status: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchCurrentUser()
+      .then((user) => {
+        if (cancelled) return;
+        setAuthState(user ? { status: "authenticated", user } : { status: "unauthenticated" });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAuthState({ status: "unauthenticated" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function handleLoggedOut() {
+    setAuthState({ status: "unauthenticated" });
+  }
+
+  function handleAuthenticated(user: AuthUser) {
+    setAuthState({ status: "authenticated", user });
+  }
+
+  if (authState.status === "loading") {
+    return (
+      <main>
+        <p>Loading…</p>
+      </main>
+    );
+  }
+
+  if (authState.status === "unauthenticated") {
+    return <LoginPage onAuthenticated={handleAuthenticated} />;
+  }
+
   return (
     <Routes>
-      <Route path="/" element={<HomePage />} />
-      <Route path="/runs/:id" element={<RunDetailPage />} />
+      <Route
+        path="/"
+        element={<HomePage user={authState.user} onLoggedOut={handleLoggedOut} />}
+      />
+      <Route path="/runs/:id" element={<RunDetailPage onLoggedOut={handleLoggedOut} />} />
+      <Route path="/profile" element={<ProfilePage onLoggedOut={handleLoggedOut} />} />
     </Routes>
   );
 }

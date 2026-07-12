@@ -8,12 +8,18 @@
  *   - GET response shape, field types (include_adjacent as boolean), ordering
  *   - 404 for unknown run id
  *
+ * Milestone 1 (Accounts and Owned Scanner Data): both endpoints now require
+ * authentication. Every request in this file authenticates as a single test
+ * user via the signup endpoint and reuses that session cookie. Dedicated
+ * cross-user isolation tests live in routes/__tests__/runsOwnership.test.ts —
+ * this file's job is unchanged scanner/validation behavior for an authenticated caller.
+ *
  * Isolation: vitest.config.ts sets DB_PATH=:memory: so each test worker gets a
  * fresh in-memory SQLite DB. NODE_ENV=test (set automatically by vitest) prevents
  * server.ts from calling app.listen() / startWorkerLoop() / runRestartRecovery().
  */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import request from "supertest";
 import { app } from "../../server.js";
@@ -22,6 +28,23 @@ import { db } from "../../db/db.js";
 // Run IDs created during each test, deleted in afterEach.
 const cleanup: string[] = [];
 
+let authCookie: string;
+let authUserId: string;
+
+function extractSessionCookie(res: request.Response): string {
+  const setCookie = res.headers["set-cookie"];
+  const cookies = Array.isArray(setCookie) ? setCookie : [setCookie as unknown as string];
+  const sessionCookie = cookies.find((c) => c.startsWith("surveyor_session="));
+  return (sessionCookie as string).split(";")[0];
+}
+
+beforeEach(async () => {
+  const email = `server-test-${randomUUID()}@example.com`;
+  const res = await request(app).post("/api/auth/signup").send({ email, password: "password123" });
+  authCookie = extractSessionCookie(res);
+  authUserId = res.body.id as string;
+});
+
 afterEach(() => {
   for (const runId of cleanup.splice(0)) {
     db.prepare("DELETE FROM trace_events WHERE run_id = ?").run(runId);
@@ -29,6 +52,21 @@ afterEach(() => {
     db.prepare("DELETE FROM run_companies WHERE run_id = ?").run(runId);
     db.prepare("DELETE FROM runs WHERE id = ?").run(runId);
   }
+  db.prepare("DELETE FROM sessions").run();
+  db.prepare("DELETE FROM users").run();
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/runs — auth requirement
+// ---------------------------------------------------------------------------
+
+describe("POST /api/runs — auth requirement", () => {
+  it("returns 401 without a session", async () => {
+    const res = await request(app)
+      .post("/api/runs")
+      .send({ role: "SWE", includeAdjacent: false, companies: ["Acme"] });
+    expect(res.status).toBe(401);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -39,6 +77,7 @@ describe("POST /api/runs — validation rejects", () => {
   it("returns 400 when role is missing", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ includeAdjacent: false, companies: ["Acme"] });
     expect(res.status).toBe(400);
   });
@@ -46,6 +85,7 @@ describe("POST /api/runs — validation rejects", () => {
   it("returns 400 when role is not a string", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: 42, includeAdjacent: false, companies: ["Acme"] });
     expect(res.status).toBe(400);
   });
@@ -53,6 +93,7 @@ describe("POST /api/runs — validation rejects", () => {
   it("returns 400 when role is empty after trimming", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "   ", includeAdjacent: false, companies: ["Acme"] });
     expect(res.status).toBe(400);
   });
@@ -60,6 +101,7 @@ describe("POST /api/runs — validation rejects", () => {
   it("returns 400 when includeAdjacent is missing", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", companies: ["Acme"] });
     expect(res.status).toBe(400);
   });
@@ -67,6 +109,7 @@ describe("POST /api/runs — validation rejects", () => {
   it("returns 400 when includeAdjacent is not a boolean", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: "yes", companies: ["Acme"] });
     expect(res.status).toBe(400);
   });
@@ -74,6 +117,7 @@ describe("POST /api/runs — validation rejects", () => {
   it("returns 400 when companies is missing", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false });
     expect(res.status).toBe(400);
   });
@@ -81,6 +125,7 @@ describe("POST /api/runs — validation rejects", () => {
   it("returns 400 when companies is empty (zero entries)", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies: [] });
     expect(res.status).toBe(400);
   });
@@ -89,6 +134,7 @@ describe("POST /api/runs — validation rejects", () => {
     const companies = Array.from({ length: 11 }, (_, i) => `Co${i + 1}`);
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies });
     expect(res.status).toBe(400);
   });
@@ -96,6 +142,7 @@ describe("POST /api/runs — validation rejects", () => {
   it("returns 400 when a company entry is empty after trimming", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies: ["Acme", "   "] });
     expect(res.status).toBe(400);
   });
@@ -103,6 +150,7 @@ describe("POST /api/runs — validation rejects", () => {
   it("returns 400 when a company entry is not a string", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies: ["Acme", 99] });
     expect(res.status).toBe(400);
   });
@@ -116,6 +164,7 @@ describe("POST /api/runs — durable creation", () => {
   it("returns 201 with a non-empty runId string", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "Software Engineer", includeAdjacent: false, companies: ["Acme"] });
 
     expect(res.status).toBe(201);
@@ -127,6 +176,7 @@ describe("POST /api/runs — durable creation", () => {
   it("creates exactly one runs row", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies: ["Acme"] });
 
     const { runId } = res.body;
@@ -139,6 +189,7 @@ describe("POST /api/runs — durable creation", () => {
   it("run row has status CREATED", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies: ["Acme"] });
 
     const { runId } = res.body;
@@ -151,6 +202,7 @@ describe("POST /api/runs — durable creation", () => {
   it("run row has role_spec_json null immediately after creation (API must not call LLM)", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies: ["Acme"] });
 
     const { runId } = res.body;
@@ -163,6 +215,7 @@ describe("POST /api/runs — durable creation", () => {
   it("run row has error_code and error_message null", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies: ["Acme"] });
 
     const { runId } = res.body;
@@ -179,6 +232,7 @@ describe("POST /api/runs — durable creation", () => {
   it("persists include_adjacent=false as integer 0 in DB", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies: ["Acme"] });
 
     const { runId } = res.body;
@@ -191,6 +245,7 @@ describe("POST /api/runs — durable creation", () => {
   it("persists include_adjacent=true as integer 1 in DB", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: true, companies: ["Acme"] });
 
     const { runId } = res.body;
@@ -203,6 +258,7 @@ describe("POST /api/runs — durable creation", () => {
   it("creates exactly N run_companies rows for N submitted companies", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies: ["Alpha", "Beta", "Gamma"] });
 
     const { runId } = res.body;
@@ -215,6 +271,7 @@ describe("POST /api/runs — durable creation", () => {
   it("all run_companies rows start with status PENDING", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies: ["Alpha", "Beta"] });
 
     const { runId } = res.body;
@@ -228,6 +285,7 @@ describe("POST /api/runs — durable creation", () => {
     const companies = ["Zeta", "Alpha", "Mu"];
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies });
 
     const { runId } = res.body;
@@ -244,6 +302,7 @@ describe("POST /api/runs — durable creation", () => {
   it("companies remain PENDING after creation (no inline worker processing)", async () => {
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies: ["Acme"] });
 
     const { runId } = res.body;
@@ -262,6 +321,7 @@ describe("POST /api/runs — durable creation", () => {
     const companies = Array.from({ length: 10 }, (_, i) => `Co${i + 1}`);
     const res = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies });
 
     expect(res.status).toBe(201);
@@ -270,11 +330,35 @@ describe("POST /api/runs — durable creation", () => {
 
   it("each POST generates a distinct run_id", async () => {
     const body = { role: "SWE", includeAdjacent: false, companies: ["Acme"] };
-    const r1 = await request(app).post("/api/runs").send(body);
-    const r2 = await request(app).post("/api/runs").send(body);
+    const r1 = await request(app).post("/api/runs").set("Cookie", authCookie).send(body);
+    const r2 = await request(app).post("/api/runs").set("Cookie", authCookie).send(body);
 
     cleanup.push(r1.body.runId, r2.body.runId);
     expect(r1.body.runId).not.toBe(r2.body.runId);
+  });
+
+  it("sets runs.user_id to the authenticated user", async () => {
+    const res = await request(app)
+      .post("/api/runs")
+      .set("Cookie", authCookie)
+      .send({ role: "SWE", includeAdjacent: false, companies: ["Acme"] });
+
+    const { runId } = res.body;
+    cleanup.push(runId);
+
+    const row = db.prepare("SELECT user_id FROM runs WHERE id = ?").get(runId) as { user_id: string };
+    expect(row.user_id).toBe(authUserId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/runs/:runId — auth requirement
+// ---------------------------------------------------------------------------
+
+describe("GET /api/runs/:runId — auth requirement", () => {
+  it("returns 401 without a session", async () => {
+    const res = await request(app).get(`/api/runs/${randomUUID()}`);
+    expect(res.status).toBe(401);
   });
 });
 
@@ -284,18 +368,19 @@ describe("POST /api/runs — durable creation", () => {
 
 describe("GET /api/runs/:runId", () => {
   it("returns 404 for an unknown run id", async () => {
-    const res = await request(app).get("/api/runs/does-not-exist");
+    const res = await request(app).get("/api/runs/does-not-exist").set("Cookie", authCookie);
     expect(res.status).toBe(404);
   });
 
   it("returns 200 with the full RunDetailResponse shape", async () => {
     const post = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies: ["Acme"] });
     const { runId } = post.body;
     cleanup.push(runId);
 
-    const res = await request(app).get(`/api/runs/${runId}`);
+    const res = await request(app).get(`/api/runs/${runId}`).set("Cookie", authCookie);
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("run");
     expect(res.body).toHaveProperty("companies");
@@ -305,11 +390,12 @@ describe("GET /api/runs/:runId", () => {
   it("run object contains all required fields with correct values", async () => {
     const post = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "Software Engineer", includeAdjacent: true, companies: ["Acme"] });
     const { runId } = post.body;
     cleanup.push(runId);
 
-    const res = await request(app).get(`/api/runs/${runId}`);
+    const res = await request(app).get(`/api/runs/${runId}`).set("Cookie", authCookie);
     const { run } = res.body;
 
     expect(run.id).toBe(runId);
@@ -323,11 +409,12 @@ describe("GET /api/runs/:runId", () => {
   it("include_adjacent is returned as boolean true (not integer 1)", async () => {
     const post = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: true, companies: ["Acme"] });
     const { runId } = post.body;
     cleanup.push(runId);
 
-    const res = await request(app).get(`/api/runs/${runId}`);
+    const res = await request(app).get(`/api/runs/${runId}`).set("Cookie", authCookie);
     expect(typeof res.body.run.include_adjacent).toBe("boolean");
     expect(res.body.run.include_adjacent).toBe(true);
   });
@@ -335,11 +422,12 @@ describe("GET /api/runs/:runId", () => {
   it("include_adjacent is returned as boolean false (not integer 0)", async () => {
     const post = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies: ["Acme"] });
     const { runId } = post.body;
     cleanup.push(runId);
 
-    const res = await request(app).get(`/api/runs/${runId}`);
+    const res = await request(app).get(`/api/runs/${runId}`).set("Cookie", authCookie);
     expect(typeof res.body.run.include_adjacent).toBe("boolean");
     expect(res.body.run.include_adjacent).toBe(false);
   });
@@ -347,11 +435,12 @@ describe("GET /api/runs/:runId", () => {
   it("companies are ordered by input_index ascending regardless of insertion order", async () => {
     const post = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies: ["Zeta", "Alpha", "Mu"] });
     const { runId } = post.body;
     cleanup.push(runId);
 
-    const res = await request(app).get(`/api/runs/${runId}`);
+    const res = await request(app).get(`/api/runs/${runId}`).set("Cookie", authCookie);
     const names = res.body.companies.map((c: { company_name: string }) => c.company_name);
     expect(names).toEqual(["Zeta", "Alpha", "Mu"]);
   });
@@ -359,11 +448,12 @@ describe("GET /api/runs/:runId", () => {
   it("company objects include all evidence fields from the contract", async () => {
     const post = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies: ["Acme"] });
     const { runId } = post.body;
     cleanup.push(runId);
 
-    const res = await request(app).get(`/api/runs/${runId}`);
+    const res = await request(app).get(`/api/runs/${runId}`).set("Cookie", authCookie);
     const company = res.body.companies[0];
 
     expect(company).toHaveProperty("id");
@@ -382,11 +472,12 @@ describe("GET /api/runs/:runId", () => {
   it("matched_jobs is an empty array before any jobs exist", async () => {
     const post = await request(app)
       .post("/api/runs")
+      .set("Cookie", authCookie)
       .send({ role: "SWE", includeAdjacent: false, companies: ["Acme"] });
     const { runId } = post.body;
     cleanup.push(runId);
 
-    const res = await request(app).get(`/api/runs/${runId}`);
+    const res = await request(app).get(`/api/runs/${runId}`).set("Cookie", authCookie);
     expect(Array.isArray(res.body.matched_jobs)).toBe(true);
     expect(res.body.matched_jobs).toHaveLength(0);
   });
@@ -397,16 +488,16 @@ describe("GET /api/runs/:runId", () => {
     cleanup.push(runId);
 
     db.prepare(
-      `INSERT INTO runs (id, created_at, status, role_raw, include_adjacent, company_count, error_code, error_message)
-       VALUES (?, ?, 'FAILED_ROLE_SPEC', 'Software Engineer', 0, 1, 'ROLE_SPEC_FAILED', 'role spec generation failed')`,
-    ).run(runId, Date.now());
+      `INSERT INTO runs (id, created_at, status, role_raw, include_adjacent, company_count, error_code, error_message, user_id)
+       VALUES (?, ?, 'FAILED_ROLE_SPEC', 'Software Engineer', 0, 1, 'ROLE_SPEC_FAILED', 'role spec generation failed', ?)`,
+    ).run(runId, Date.now(), authUserId);
 
     db.prepare(
       `INSERT INTO run_companies (id, run_id, company_name, input_index, status, created_at, failure_code, failure_reason)
        VALUES (?, ?, 'Acme', 0, 'CANCELLED', ?, 'ROLE_SPEC_FAILED', 'role spec generation failed')`,
     ).run(companyId, runId, Date.now());
 
-    const res = await request(app).get(`/api/runs/${runId}`);
+    const res = await request(app).get(`/api/runs/${runId}`).set("Cookie", authCookie);
 
     expect(res.status).toBe(200);
     expect(res.body.run.status).toBe("FAILED_ROLE_SPEC");
@@ -424,9 +515,9 @@ describe("GET /api/runs/:runId", () => {
     cleanup.push(runId);
 
     db.prepare(
-      `INSERT INTO runs (id, created_at, status, role_raw, include_adjacent, company_count)
-       VALUES (?, ?, 'COMPLETED', 'Software Engineer', 0, 1)`,
-    ).run(runId, Date.now());
+      `INSERT INTO runs (id, created_at, status, role_raw, include_adjacent, company_count, user_id)
+       VALUES (?, ?, 'COMPLETED', 'Software Engineer', 0, 1, ?)`,
+    ).run(runId, Date.now(), authUserId);
 
     db.prepare(
       `INSERT INTO run_companies
@@ -441,7 +532,7 @@ describe("GET /api/runs/:runId", () => {
        VALUES (?, ?, ?, 'Software Engineer', 'Remote', 'https://boards.greenhouse.io/acme/1', 'Matched inclusion phrase Software Engineer')`,
     ).run(randomUUID(), runId, companyId);
 
-    const res = await request(app).get(`/api/runs/${runId}`);
+    const res = await request(app).get(`/api/runs/${runId}`).set("Cookie", authCookie);
 
     expect(res.status).toBe(200);
 
@@ -480,9 +571,9 @@ describe("GET /api/runs/:runId", () => {
     cleanup.push(runId);
 
     db.prepare(
-      `INSERT INTO runs (id, created_at, status, role_raw, include_adjacent, company_count)
-       VALUES (?, ?, 'COMPLETED', 'SWE', 0, 2)`
-    ).run(runId, Date.now());
+      `INSERT INTO runs (id, created_at, status, role_raw, include_adjacent, company_count, user_id)
+       VALUES (?, ?, 'COMPLETED', 'SWE', 0, 2, ?)`
+    ).run(runId, Date.now(), authUserId);
 
     db.prepare(
       `INSERT INTO run_companies (id, run_id, company_name, input_index, status, created_at)
@@ -505,7 +596,7 @@ describe("GET /api/runs/:runId", () => {
        VALUES (?, ?, ?, 'Engineer at Alpha', null, 'https://x/alpha', 'match')`
     ).run(randomUUID(), runId, compAId);
 
-    const res = await request(app).get(`/api/runs/${runId}`);
+    const res = await request(app).get(`/api/runs/${runId}`).set("Cookie", authCookie);
     const titles = res.body.matched_jobs.map((j: { title: string }) => j.title);
 
     // Alpha (input_index=0) must appear before Beta (input_index=1).

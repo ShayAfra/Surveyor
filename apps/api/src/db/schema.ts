@@ -68,6 +68,25 @@ export function ensureSchema(db: InstanceType<typeof Database>): void {
       created_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      password_salt TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email);
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+
     CREATE INDEX IF NOT EXISTS idx_run_companies_run_id ON run_companies(run_id);
     CREATE INDEX IF NOT EXISTS idx_run_companies_status ON run_companies(status);
     CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
@@ -75,5 +94,62 @@ export function ensureSchema(db: InstanceType<typeof Database>): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_job_details_job_row_id_unique ON job_details(job_row_id);
     CREATE INDEX IF NOT EXISTS idx_job_details_run_id ON job_details(run_id);
     CREATE INDEX IF NOT EXISTS idx_job_details_company_id ON job_details(company_id);
+
+    CREATE TABLE IF NOT EXISTS user_profiles (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      full_name TEXT NULL,
+      location TEXT NULL,
+      years_experience INTEGER NULL,
+      target_titles TEXT NULL,
+      notes TEXT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profiles_user_id_unique ON user_profiles(user_id);
+
+    CREATE TABLE IF NOT EXISTS user_profile_items (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      item_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NULL,
+      start_date TEXT NULL,
+      end_date TEXT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_profile_items_user_id ON user_profile_items(user_id);
+
+    CREATE TABLE IF NOT EXISTS resumes (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      resume_text TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_resumes_user_id_unique ON resumes(user_id);
   `);
+
+  ensureRunsUserIdColumn(db);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_runs_user_id ON runs(user_id);
+  `);
+}
+
+/**
+ * runs.user_id is added via a guarded ALTER TABLE because SQLite has no
+ * `ADD COLUMN IF NOT EXISTS`. PRAGMA table_info is checked first so this is
+ * safe to call on every startup without erroring on already-migrated DBs.
+ */
+function ensureRunsUserIdColumn(db: InstanceType<typeof Database>): void {
+  const columns = db.prepare(`PRAGMA table_info(runs)`).all() as { name: string }[];
+  const hasUserId = columns.some((column) => column.name === "user_id");
+  if (!hasUserId) {
+    db.exec(`ALTER TABLE runs ADD COLUMN user_id TEXT`);
+  }
 }

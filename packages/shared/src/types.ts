@@ -1,4 +1,4 @@
-import type { AtsType, CompanyStatus, RunStatus } from "./constants.js";
+import type { AtsType, CompanyStatus, ProfileItemType, RunStatus } from "./constants.js";
 
 export type RoleSpecSeniority = "any" | "junior" | "mid" | "senior";
 
@@ -57,4 +57,39 @@ export interface JobDetailResponse {
   failure_code: string | null;
   failure_reason: string | null;
   fetched_at: number | null;
+}
+
+export interface UserProfileResponse {
+  id: string;
+  full_name: string | null;
+  location: string | null;
+  years_experience: number | null;
+  target_titles: string | null;
+  notes: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface UserProfileItemResponse {
+  id: string;
+  item_type: ProfileItemType;
+  title: string;
+  description: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ResumeMemoryResponse {
+  id: string;
+  resume_text: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ProfileMemoryResponse {
+  profile: UserProfileResponse | null;
+  items: UserProfileItemResponse[];
+  resume: ResumeMemoryResponse | null;
 }

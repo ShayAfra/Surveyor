@@ -3,10 +3,11 @@ import { CompanyStatus, RunStatus } from "@surveyor/shared";
 import type { RunCompanyResponse, RunDetailResponse, RunResponse } from "@surveyor/shared";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/db.js";
+import { requireAuth, type AuthenticatedRequest } from "../lib/auth.js";
 
 export const runsRouter = Router();
 
-runsRouter.post("/api/runs", (req, res) => {
+runsRouter.post("/api/runs", requireAuth, (req: AuthenticatedRequest, res) => {
   const { role, includeAdjacent, companies } = req.body ?? {};
 
   if (typeof role !== "string") {
@@ -58,8 +59,9 @@ runsRouter.post("/api/runs", (req, res) => {
       role_spec_started_at,
       company_count,
       error_code,
-      error_message
-    ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL)
+      error_message,
+      user_id
+    ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL, ?)
   `);
 
   const insertCompany = db.prepare(`
@@ -90,7 +92,8 @@ runsRouter.post("/api/runs", (req, res) => {
       RunStatus.CREATED,
       role,
       includeAdjacent ? 1 : 0,
-      trimmedCompanies.length
+      trimmedCompanies.length,
+      req.userId
     );
 
     for (let index = 0; index < trimmedCompanies.length; index += 1) {
@@ -113,7 +116,7 @@ runsRouter.post("/api/runs", (req, res) => {
   }
 });
 
-runsRouter.get("/api/runs/:runId", (req, res) => {
+runsRouter.get("/api/runs/:runId", requireAuth, (req: AuthenticatedRequest, res) => {
   const { runId } = req.params;
 
   const runRow = db
@@ -121,10 +124,10 @@ runsRouter.get("/api/runs/:runId", (req, res) => {
       `
       SELECT id, status, role_raw, include_adjacent, error_code, error_message
       FROM runs
-      WHERE id = ?
+      WHERE id = ? AND user_id = ?
       `
     )
-    .get(runId) as
+    .get(runId, req.userId) as
     | {
         id: string;
         status: RunStatus;

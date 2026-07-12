@@ -1,21 +1,29 @@
 import { Router } from "express";
 import type { JobDetailResponse } from "@surveyor/shared";
 import { db } from "../db/db.js";
+import { requireAuth, type AuthenticatedRequest } from "../lib/auth.js";
 
 export const jobDetailsRouter = Router();
 
-jobDetailsRouter.get("/api/jobs/:jobRowId/detail", (req, res) => {
+jobDetailsRouter.get("/api/jobs/:jobRowId/detail", requireAuth, (req: AuthenticatedRequest, res) => {
   const { jobRowId } = req.params;
 
   const row = db
     .prepare(
       `
-      SELECT job_row_id, job_url, description_text, failure_code, failure_reason, fetched_at
+      SELECT job_details.job_row_id AS job_row_id,
+             job_details.job_url AS job_url,
+             job_details.description_text AS description_text,
+             job_details.failure_code AS failure_code,
+             job_details.failure_reason AS failure_reason,
+             job_details.fetched_at AS fetched_at
       FROM job_details
-      WHERE job_row_id = ?
+      JOIN job_rows ON job_rows.id = job_details.job_row_id
+      JOIN runs ON runs.id = job_rows.run_id
+      WHERE job_details.job_row_id = ? AND runs.user_id = ?
       `
     )
-    .get(jobRowId) as
+    .get(jobRowId, req.userId) as
     | {
         job_row_id: string;
         job_url: string;
