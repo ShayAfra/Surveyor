@@ -1,4 +1,5 @@
 import type {
+  ApplicationPacketResponse,
   FitAnalysisResponse,
   JobRowResponse,
   RunCompanyResponse,
@@ -511,6 +512,158 @@ function JobFitAnalysis({ jobRowId, onLoggedOut }: { jobRowId: string; onLoggedO
   );
 }
 
+function ApplicationPacket({ jobRowId, onLoggedOut }: { jobRowId: string; onLoggedOut: () => void }) {
+  const [packets, setPackets] = useState<ApplicationPacketResponse[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  async function loadPackets() {
+    try {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobRowId)}/application-packets`);
+      if (res.status === 401) {
+        onLoggedOut();
+        return;
+      }
+      if (!res.ok) {
+        setError(`Request failed (${res.status})`);
+        return;
+      }
+      setPackets((await res.json()) as ApplicationPacketResponse[]);
+    } catch {
+      setError("Network error");
+    }
+  }
+
+  useEffect(() => {
+    if (expanded && packets === null) {
+      void loadPackets();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded]);
+
+  async function handleGenerate() {
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobRowId)}/application-packets`, {
+        method: "POST",
+      });
+      if (res.status === 401) {
+        onLoggedOut();
+        return;
+      }
+      const data: unknown = await res.json().catch(() => null);
+      const body = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+      if (!res.ok) {
+        const msg =
+          typeof body.error === "string" ? body.error : `Request failed (${res.status})`;
+        setError(msg);
+        return;
+      }
+      await loadPackets();
+    } catch {
+      setError("Network error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDelete(packetId: string) {
+    const res = await fetch(`/api/application-packets/${encodeURIComponent(packetId)}`, {
+      method: "DELETE",
+    });
+    if (res.status === 401) {
+      onLoggedOut();
+      return;
+    }
+    await loadPackets();
+  }
+
+  const latest = packets && packets.length > 0 ? packets[0] : null;
+
+  return (
+    <div>
+      <button type="button" onClick={() => setExpanded((v) => !v)}>
+        {expanded ? "Hide application packet" : "Generate application packet"}
+      </button>
+      {expanded && (
+        <div style={{ marginLeft: "1rem", marginTop: "0.5rem" }}>
+          <p>Generated from stored evidence. Review before using.</p>
+          <button type="button" onClick={handleGenerate} disabled={loading}>
+            {loading ? "Generating…" : "Generate new packet"}
+          </button>
+          {error != null && <p role="alert">{error}</p>}
+
+          {latest && (
+            <div>
+              {latest.status === "FAILED" ? (
+                <p role="alert">
+                  Packet generation attempt failed:{" "}
+                  {latest.failure_reason ?? latest.failure_code ?? "unknown error"}
+                </p>
+              ) : (
+                <>
+                  <h4>Packet summary</h4>
+                  <p>{latest.packet_summary}</p>
+
+                  {latest.caveats && latest.caveats.length > 0 && (
+                    <p>
+                      <strong>Caveats:</strong> {latest.caveats.join(" ")}
+                    </p>
+                  )}
+
+                  <h4>Positioning notes</h4>
+                  <EvidenceItemList items={latest.positioning_notes ?? []} />
+
+                  <h4>Draft cover letter</h4>
+                  <p>Review before using.</p>
+                  <p style={{ whiteSpace: "pre-wrap" }}>{latest.cover_letter_draft}</p>
+
+                  <h4>Resume bullet suggestions</h4>
+                  <p>Suggestions only — your stored resume is not changed.</p>
+                  <EvidenceItemList items={latest.resume_bullet_suggestions ?? []} />
+
+                  <h4>Talking points</h4>
+                  <EvidenceItemList items={latest.talking_points ?? []} />
+
+                  <h4>Questions to prepare</h4>
+                  <EvidenceItemList items={latest.questions_to_prepare ?? []} />
+                </>
+              )}
+              <button type="button" onClick={() => handleDelete(latest.id)}>
+                Delete this packet
+              </button>
+            </div>
+          )}
+
+          {packets != null && packets.length === 0 && <p>No application packet yet.</p>}
+
+          {error != null && error.toLowerCase().includes("no usable profile or resume") && (
+            <p>
+              <Link to="/profile">Add profile or resume information</Link> to enable application
+              packet generation.
+            </p>
+          )}
+
+          {packets != null && packets.length > 1 && (
+            <details>
+              <summary>Previous packets ({packets.length - 1})</summary>
+              <ul>
+                {packets.slice(1).map((p) => (
+                  <li key={p.id}>
+                    {new Date(p.created_at).toLocaleString()} — {p.status}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RunDetailPage({ onLoggedOut }: { onLoggedOut: () => void }) {
   const { id } = useParams();
   const [detail, setDetail] = useState<RunDetailResponse | null>(null);
@@ -714,6 +867,7 @@ function RunDetailPage({ onLoggedOut }: { onLoggedOut: () => void }) {
                                 {j.location != null && j.location !== "" && ` · ${j.location}`}
                                 {j.match_reason && ` · ${j.match_reason}`}
                                 <JobFitAnalysis jobRowId={j.id} onLoggedOut={onLoggedOut} />
+                                <ApplicationPacket jobRowId={j.id} onLoggedOut={onLoggedOut} />
                               </li>
                             ))}
                           </ul>

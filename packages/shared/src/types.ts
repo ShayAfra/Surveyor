@@ -1,4 +1,11 @@
-import type { AtsType, CompanyStatus, FitAnalysisStatus, ProfileItemType, RunStatus } from "./constants.js";
+import type {
+  ApplicationPacketStatus,
+  AtsType,
+  CompanyStatus,
+  FitAnalysisStatus,
+  ProfileItemType,
+  RunStatus,
+} from "./constants.js";
 
 export type RoleSpecSeniority = "any" | "junior" | "mid" | "senior";
 
@@ -116,3 +123,25 @@ export interface FitAnalysisResponse {
 }
 
 export type FitAnalysisListResponse = FitAnalysisResponse[];
+
+export type ApplicationPacketEvidenceItem = FitAnalysisEvidenceItem;
+
+export interface ApplicationPacketResponse {
+  id: string;
+  job_row_id: string;
+  job_fit_analysis_id: string | null;
+  status: ApplicationPacketStatus;
+  packet_summary: string | null;
+  cover_letter_draft: string | null;
+  positioning_notes: ApplicationPacketEvidenceItem[] | null;
+  resume_bullet_suggestions: ApplicationPacketEvidenceItem[] | null;
+  talking_points: ApplicationPacketEvidenceItem[] | null;
+  questions_to_prepare: ApplicationPacketEvidenceItem[] | null;
+  caveats: string[] | null;
+  model_name: string | null;
+  failure_code: string | null;
+  failure_reason: string | null;
+  created_at: number;
+}
+
+export type ApplicationPacketListResponse = ApplicationPacketResponse[];

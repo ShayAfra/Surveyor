@@ -152,6 +152,28 @@ export function ensureSchema(db: InstanceType<typeof Database>): void {
 
     CREATE INDEX IF NOT EXISTS idx_job_fit_analyses_user_id ON job_fit_analyses(user_id);
     CREATE INDEX IF NOT EXISTS idx_job_fit_analyses_job_row_id ON job_fit_analyses(job_row_id);
+
+    CREATE TABLE IF NOT EXISTS application_packets (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      job_row_id TEXT NOT NULL,
+      job_fit_analysis_id TEXT NULL,
+      status TEXT NOT NULL,
+      packet_summary TEXT NULL,
+      cover_letter_draft TEXT NULL,
+      positioning_notes_json TEXT NULL,
+      resume_bullet_suggestions_json TEXT NULL,
+      talking_points_json TEXT NULL,
+      questions_to_prepare_json TEXT NULL,
+      evidence_snapshot_json TEXT NOT NULL,
+      model_name TEXT NULL,
+      failure_code TEXT NULL,
+      failure_reason TEXT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_application_packets_user_id ON application_packets(user_id);
+    CREATE INDEX IF NOT EXISTS idx_application_packets_job_row_id ON application_packets(job_row_id);
   `);
 
   ensureRunsUserIdColumn(db);

@@ -45,3 +45,12 @@ export const FitAnalysisStatus = {
 } as const;
 
 export type FitAnalysisStatus = (typeof FitAnalysisStatus)[keyof typeof FitAnalysisStatus];
+
+/** Local to application_packets. Not a scanner run/company status. */
+export const ApplicationPacketStatus = {
+  COMPLETED: "COMPLETED",
+  FAILED: "FAILED",
+} as const;
+
+export type ApplicationPacketStatus =
+  (typeof ApplicationPacketStatus)[keyof typeof ApplicationPacketStatus];
