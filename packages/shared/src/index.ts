@@ -22,6 +22,11 @@ export type {
   RunCompanyResponse,
   RunDetailResponse,
   RunResponse,
+  SavedCompanyListResponse,
+  SavedCompanyResponse,
+  SavedSearchCompanyResponse,
+  SavedSearchListResponse,
+  SavedSearchResponse,
   UserProfileItemResponse,
   UserProfileResponse,
 } from "./types.js";

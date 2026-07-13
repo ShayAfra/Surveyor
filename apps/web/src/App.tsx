@@ -16,6 +16,7 @@ import {
   exportUnverifiedCsv,
 } from "./csvExport.js";
 import ProfilePage from "./ProfilePage.js";
+import SavedPage from "./SavedPage.js";
 
 type HealthState =
   | { status: "loading" }
@@ -239,6 +240,7 @@ function HomePage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () => vo
         <div>
           <span>{user.email}</span>{" "}
           <Link to="/profile">Profile</Link>{" "}
+          <Link to="/saved">Saved</Link>{" "}
           <button type="button" onClick={handleLogout}>
             Log out
           </button>
@@ -960,6 +962,7 @@ export default function App() {
       />
       <Route path="/runs/:id" element={<RunDetailPage onLoggedOut={handleLoggedOut} />} />
       <Route path="/profile" element={<ProfilePage onLoggedOut={handleLoggedOut} />} />
+      <Route path="/saved" element={<SavedPage onLoggedOut={handleLoggedOut} />} />
     </Routes>
   );
 }

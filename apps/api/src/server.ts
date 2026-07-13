@@ -8,6 +8,8 @@ import { authRouter } from "./routes/auth.js";
 import { profileRouter } from "./routes/profile.js";
 import { fitAnalysisRouter } from "./routes/fitAnalysis.js";
 import { applicationPacketRouter } from "./routes/applicationPacket.js";
+import { savedCompaniesRouter } from "./routes/savedCompanies.js";
+import { savedSearchesRouter } from "./routes/savedSearches.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? "3000");
@@ -19,6 +21,8 @@ app.use(jobDetailsRouter);
 app.use(profileRouter);
 app.use(fitAnalysisRouter);
 app.use(applicationPacketRouter);
+app.use(savedCompaniesRouter);
+app.use(savedSearchesRouter);
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });

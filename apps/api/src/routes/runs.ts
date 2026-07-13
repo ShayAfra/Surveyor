@@ -1,117 +1,27 @@
 import { Router } from "express";
-import { CompanyStatus, RunStatus } from "@surveyor/shared";
 import type { RunCompanyResponse, RunDetailResponse, RunResponse } from "@surveyor/shared";
-import { randomUUID } from "node:crypto";
+import type { RunStatus } from "@surveyor/shared";
 import { db } from "../db/db.js";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth.js";
+import { CreateRunRequestError, createRunForUser } from "../lib/runs.js";
 
 export const runsRouter = Router();
 
 runsRouter.post("/api/runs", requireAuth, (req: AuthenticatedRequest, res) => {
   const { role, includeAdjacent, companies } = req.body ?? {};
 
-  if (typeof role !== "string") {
-    return res.status(400).json({ error: "role must be a string" });
-  }
-
-  if (typeof includeAdjacent !== "boolean") {
-    return res.status(400).json({ error: "includeAdjacent must be a boolean" });
-  }
-
-  if (!Array.isArray(companies)) {
-    return res.status(400).json({ error: "companies must be an array" });
-  }
-
-  const trimmedRole = role.trim();
-  if (trimmedRole.length === 0) {
-    return res.status(400).json({ error: "role must be non-empty after trimming" });
-  }
-
-  if (companies.length < 1 || companies.length > 10) {
-    return res.status(400).json({ error: "companies must contain between 1 and 10 entries" });
-  }
-
-  const trimmedCompanies: string[] = [];
-  for (const company of companies) {
-    if (typeof company !== "string") {
-      return res.status(400).json({ error: "each company must be a string" });
-    }
-
-    const trimmedCompany = company.trim();
-    if (trimmedCompany.length === 0) {
-      return res.status(400).json({ error: "company entries must be non-empty after trimming" });
-    }
-
-    trimmedCompanies.push(trimmedCompany);
-  }
-
-  const runId = randomUUID();
-  const nowMs = Date.now();
-
-  const insertRun = db.prepare(`
-    INSERT INTO runs (
-      id,
-      created_at,
-      status,
-      role_raw,
-      include_adjacent,
-      role_spec_json,
-      role_spec_started_at,
-      company_count,
-      error_code,
-      error_message,
-      user_id
-    ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL, ?)
-  `);
-
-  const insertCompany = db.prepare(`
-    INSERT INTO run_companies (
-      id,
-      run_id,
-      company_name,
-      input_index,
-      status,
-      created_at,
-      started_at,
-      finished_at,
-      worker_token,
-      careers_url,
-      ats_type,
-      extractor_used,
-      listings_scanned,
-      pages_visited,
-      failure_code,
-      failure_reason
-    ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
-  `);
-
-  const createRunTx = db.transaction(() => {
-    insertRun.run(
-      runId,
-      nowMs,
-      RunStatus.CREATED,
-      role,
-      includeAdjacent ? 1 : 0,
-      trimmedCompanies.length,
-      req.userId
-    );
-
-    for (let index = 0; index < trimmedCompanies.length; index += 1) {
-      insertCompany.run(
-        randomUUID(),
-        runId,
-        trimmedCompanies[index],
-        index,
-        CompanyStatus.PENDING,
-        nowMs
-      );
-    }
-  });
-
   try {
-    createRunTx();
+    const { runId } = createRunForUser({
+      userId: req.userId as string,
+      role,
+      includeAdjacent,
+      companies,
+    });
     return res.status(201).json({ runId });
-  } catch {
+  } catch (err) {
+    if (err instanceof CreateRunRequestError) {
+      return res.status(err.httpStatus).json({ error: err.message });
+    }
     return res.status(500).json({ error: "failed to create run" });
   }
 });

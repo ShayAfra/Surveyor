@@ -174,6 +174,43 @@ export function ensureSchema(db: InstanceType<typeof Database>): void {
 
     CREATE INDEX IF NOT EXISTS idx_application_packets_user_id ON application_packets(user_id);
     CREATE INDEX IF NOT EXISTS idx_application_packets_job_row_id ON application_packets(job_row_id);
+
+    CREATE TABLE IF NOT EXISTS saved_companies (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      company_name TEXT NOT NULL,
+      company_url TEXT NULL,
+      notes TEXT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_saved_companies_user_id ON saved_companies(user_id);
+
+    CREATE TABLE IF NOT EXISTS saved_searches (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      role_raw TEXT NOT NULL,
+      include_adjacent INTEGER NOT NULL,
+      notes TEXT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_saved_searches_user_id ON saved_searches(user_id);
+
+    CREATE TABLE IF NOT EXISTS saved_search_companies (
+      id TEXT PRIMARY KEY,
+      saved_search_id TEXT NOT NULL,
+      saved_company_id TEXT NULL,
+      company_name TEXT NOT NULL,
+      input_index INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_saved_search_companies_saved_search_id_input_index ON saved_search_companies(saved_search_id, input_index);
+    CREATE INDEX IF NOT EXISTS idx_saved_search_companies_saved_company_id ON saved_search_companies(saved_company_id);
   `);
 
   ensureRunsUserIdColumn(db);

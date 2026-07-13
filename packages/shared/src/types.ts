@@ -145,3 +145,34 @@ export interface ApplicationPacketResponse {
 }
 
 export type ApplicationPacketListResponse = ApplicationPacketResponse[];
+
+export interface SavedCompanyResponse {
+  id: string;
+  company_name: string;
+  company_url: string | null;
+  notes: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export type SavedCompanyListResponse = SavedCompanyResponse[];
+
+export interface SavedSearchCompanyResponse {
+  id: string;
+  saved_company_id: string | null;
+  company_name: string;
+  input_index: number;
+}
+
+export interface SavedSearchResponse {
+  id: string;
+  name: string;
+  role_raw: string;
+  include_adjacent: boolean;
+  notes: string | null;
+  companies: SavedSearchCompanyResponse[];
+  created_at: number;
+  updated_at: number;
+}
+
+export type SavedSearchListResponse = SavedSearchResponse[];
