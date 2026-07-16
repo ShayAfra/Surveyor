@@ -1,45 +1,50 @@
 # Surveyor Agent Expansion Implementation Context
 
-## Status
+## Purpose
 
-This document is the active implementation context for Surveyor's Agent Expansion phase.
+This document defines the durable product and implementation context for Surveyor's Agent Workflow.
 
-The Pre-Agent Expansion Readiness Pass is complete.
+The Pre-Agent Expansion Readiness Pass established that Agent Workflow development may proceed without replacing or weakening the Core Scanner contract. This is a durable product boundary, not a moving implementation checkpoint.
 
-Completed foundation:
+It is not a progress tracker.
 
-1. Core Scanner MVP
-2. Scanner readiness audit
-3. Scanner blocker fixes
-4. Minimal job detail ingestion
-5. Run-completion race fix for job details
-6. Gate 4 final readiness verification
+It should not record:
 
-Surveyor is now allowed to move from Core Scanner work into Agent Expansion work.
+1. Which milestone is currently active
+2. Which milestones are complete
+3. Which milestone comes next
+4. Temporary implementation checkpoints
+5. Task-specific instructions
 
-This document does not replace the Core Scanner contract. It defines how to begin Agent Expansion without contaminating or weakening the scanner.
+Current implementation state should be determined from the repository code. Current work should be determined by the user's explicit request. Milestone sequencing and broader planning belong in `agentExpansionRoadmap.md`, while temporary checkpoints belong in implementation prompts or separate checkpoint notes.
+
+This document does not replace the Core Scanner contract. It defines how Agent Workflow capabilities may be built around the scanner without contaminating or weakening it.
 
 ## Authority
 
-For current scanner behavior, these remain authoritative:
+For current Core Scanner behavior:
 
 1. `CLAUDE.md`
 2. `operatingContext.md`
 3. Current repository code
 
-For completed readiness context:
+For completed scanner readiness context:
 
 1. `agentReadiness.md`
 
-For broad future planning reference:
+For durable Agent Workflow direction and boundaries:
+
+1. This `expansionContext.md`
+
+For broad future planning and sequencing:
 
 1. `agentExpansionRoadmap.md`
 
-This file is the active execution context for the next meaningful milestones.
+The user's current explicit request overrides repository documentation when the request is unambiguous.
 
 If this file conflicts with the Core Scanner contract, the Core Scanner contract wins.
 
-If this file conflicts with the user's current explicit request, the user's current explicit request wins.
+The existence of a capability in this document or the roadmap does not authorize implementing or expanding it automatically. Product work must remain limited to the user's explicit request.
 
 ## Product direction
 
@@ -63,7 +68,7 @@ Surveyor should not become:
 
 ## Two-layer model
 
-Surveyor moves in two layers.
+Surveyor has two layers.
 
 ### Layer 1: Core Scanner
 
@@ -78,7 +83,7 @@ The scanner must remain:
 1. Conservative
 2. Deterministic after role spec generation
 3. Evidence based
-4. Source-authoritative
+4. Source authoritative
 5. Traceable
 6. Explicit about uncertainty
 
@@ -90,24 +95,23 @@ It answers:
 
 Given who the user is, which verified opportunities are worth acting on, what is missing, and what truthful application materials should the user prepare?
 
-The agent layer may eventually support:
+Agent Workflow capabilities may include:
 
-1. Accounts
-2. Private profile memory
-3. Resume memory
-4. Job fit analysis
-5. Application packet generation
-6. Saved companies and searches
-7. Continuous monitoring
-8. Application tracking
+1. Accounts and user ownership
+2. Private profile and resume memory
+3. Job fit and job understanding
+4. Application packet generation
+5. Saved companies and searches
+6. Continuous monitoring
+7. Application tracking
 
-The agent layer must not change scanner truth.
+The Agent Workflow must consume scanner evidence without changing scanner truth.
 
 ## Non-negotiable scanner boundaries
 
-Agent Expansion must preserve these rules:
+Agent Workflow development must preserve these rules:
 
-1. The API creates scanner runs only.
+1. The scanner run creation API creates ordinary scanner runs only.
 2. The worker owns scanner processing transitions after creation.
 3. SQLite is currently the source of truth.
 4. Backend persisted state is the source of truth for the UI.
@@ -124,11 +128,11 @@ Agent Expansion must preserve these rules:
 15. Trace events must remain durable evidence.
 16. Restart recovery must not touch final companies.
 17. Job detail ingestion must not change company final status.
-18. Future agent features must not reinterpret scanner outcomes.
+18. Agent Workflow features must not reinterpret scanner outcomes.
 
-## Current scanner output contract
+## Scanner evidence contract
 
-The scanner now produces durable evidence that future agent features can rely on:
+The scanner produces durable evidence that Agent Workflow capabilities can rely on:
 
 1. `runs`
 2. `run_companies`
@@ -143,422 +147,153 @@ For matched jobs, `job_details` stores either:
 
 A detail fetch failure is still useful evidence. It means the scanner found the job, but the detail layer could not fetch the full description.
 
-Future agents should consume stored job detail evidence. They should not fetch job descriptions ad hoc unless a future milestone explicitly adds a retry or refresh feature.
+Agent Workflow features should consume stored job detail evidence. They should not fetch job descriptions ad hoc unless an explicitly requested feature adds a retry or refresh path.
 
 A completed scanner run should not have matched `job_rows` missing corresponding `job_details` rows. A failed detail row counts as recorded evidence.
 
+## Agent Workflow capability boundaries
+
+### Accounts and ownership
+
+User-specific scanner data and private workflow data must be owned and isolated.
+
+Ownership enforcement must be real. Do not create fake placeholder ownership that is not enforced through storage and API access.
+
+### Profile and resume memory
+
+Profile and resume data are private user context.
+
+Stored user context should remain user controlled, retrievable, editable, and deletable according to the product scope being implemented.
+
+Do not treat vague model memory as a substitute for durable user-owned data.
+
+### Job fit and job understanding
+
+Fit analysis should use:
+
+1. Stored scanner job evidence
+2. User-owned profile and resume context
+3. Evidence-linked reasoning
+
+It must not invent user experience, qualifications, or job facts.
+
+### Application preparation
+
+Application materials should be:
+
+1. Grounded in stored user evidence
+2. Grounded in stored job evidence
+3. Saved for user review
+4. Truthful and user-controlled
+5. Never submitted automatically
+
+### Saved companies and searches
+
+Saved targets should remain user owned and reusable.
+
+Starting a scanner run from saved targets must create an ordinary scanner run and preserve all scanner rules.
+
+Saving targets does not imply background monitoring.
+
+### Continuous monitoring
+
+Repeat scanning must remain a wrapper around ordinary scanner runs.
+
+Monitoring must preserve scanner uncertainty, evidence, ownership, and finalization rules.
+
+A monitoring layer must not create a second scanner truth model.
+
+### Application tracking
+
+Application tracking should link user actions back to verified opportunities and generated materials when available.
+
+Tracking state is user workflow state. It must not modify scanner outcomes.
+
+## Dependency principles
+
+These are durable dependency rules, not milestone status:
+
+1. User ownership should exist before storing private profile, resume, saved target, or application data.
+2. Job fit analysis should rely on both stored job evidence and user context.
+3. Application materials should rely on user evidence and job evidence.
+4. Saved targets should exist before repeat monitoring depends on them.
+5. Monitoring should execute ordinary scanner runs rather than bypassing the scanner.
+6. Application tracking should link to durable jobs and generated materials where available.
+
 ## Implementation philosophy
 
-We should avoid fake tiny slices.
+Avoid fake tiny slices.
 
 The goal is not to create busywork or placeholders that get replaced later.
 
-The goal is to build minimum meaningful milestones.
+The goal is to build minimum meaningful product boundaries.
 
-A milestone is meaningful if, after completing it, Surveyor becomes more real as a product even if work stops there.
+A meaningful implementation slice:
 
-Good milestones:
+1. Adds real product behavior
+2. Preserves scanner behavior
+3. Has clear acceptance criteria
+4. Is reviewable
+5. Creates a stable foundation
+6. Reduces rewrite risk
 
-1. Add a durable product layer.
-2. Preserve scanner behavior.
-3. Have clear acceptance criteria.
-4. Are reviewable.
-5. Create a stable foundation for the next milestone.
-6. Reduce future rewrite risk.
+Avoid:
 
-Bad milestones:
+1. Placeholder tables nobody uses
+2. Fake ownership that will be replaced
+3. Scaffolding without product behavior
+4. Splitting work so narrowly that implementation becomes harder
+5. Building abstractions before the product needs them
+6. Expanding scope beyond the explicit request
 
-1. Add placeholder tables nobody uses.
-2. Add fake ownership that will be replaced.
-3. Create scaffolding without product behavior.
-4. Split work so small that implementation takes longer than the feature.
-5. Build future abstractions before the product needs them.
+Minimum meaningful does not mean giant. It means the work should create a real, usable boundary rather than a throwaway intermediate state.
 
-Minimum meaningful does not mean giant. It means the milestone should ship a real foundation boundary rather than a throwaway intermediate step.
+## Privacy and grounding principles
 
-## Active milestone sequence
+1. Private user data must be scoped to its owner.
+2. Generated outputs must be grounded in stored evidence.
+3. Unsupported user claims must not be invented.
+4. Scanner uncertainty must remain visible.
+5. Generated materials require user review.
+6. Agent outputs must not silently become scanner facts.
+7. Trace and logging behavior must avoid unnecessarily exposing private user data.
 
-### Milestone 1: Accounts and Owned Scanner Data
+## Referral intelligence parking lot
 
-Purpose:
+Referral intelligence remains outside the active product boundary unless explicitly requested.
 
-Turn Surveyor from global scanner data into user-owned scanner data.
+Do not add by default:
 
-This is the next implementation milestone.
-
-This milestone should be real enough to avoid fake local-owner drift, but narrow enough to avoid building profile, resume, packet, monitoring, or tracking features too early.
-
-Includes:
-
-1. User/account data model
-2. Authentication/session decision appropriate for the project stage
-3. `runs` owned by a user
-4. Existing scanner runs migrated or backfilled safely
-5. New scanner runs created under the current user
-6. Run detail access scoped to the owning user
-7. Job rows and job details accessible only through owned runs
-8. Scanner worker behavior preserved
-9. Existing scanner behavior preserved
-10. Tests proving ownership and isolation
-
-Excludes:
-
-1. Resume upload
-2. Profile memory
-3. Application packet generation
-4. Saved companies
-5. Saved searches
-6. Continuous monitoring
-7. Application tracking
-8. Referral intelligence
-9. Dashboard redesign
-10. Browser automation
-
-Definition of done:
-
-1. A user can own scanner runs.
-2. User-scoped run creation works.
-3. User-scoped run detail retrieval works.
-4. Job detail endpoint access is scoped through the owning run.
-5. One user cannot read another user's runs or job details.
-6. Existing scanner worker behavior is unchanged.
-7. Job detail ingestion still works.
-8. Existing scanner tests pass.
-9. New ownership/isolation tests pass.
-10. No profile, resume, packet, monitoring, tracking, or referral features are added.
-
-Important design decision:
-
-Do not build a fake placeholder owner model unless full account implementation proves too large for this milestone.
-
-The preferred direction is a real account and ownership foundation, scoped tightly to scanner data.
-
-This milestone may be implemented through multiple commits if needed, but those commits should be part of one meaningful milestone and should not create unused scaffolding.
-
-### Milestone 2: Profile and Resume Memory
-
-Purpose:
-
-Give Surveyor durable user context.
-
-This milestone should happen after ownership exists because profile and resume data are personal.
-
-Includes:
-
-1. User profile storage
-2. Resume text or resume document storage decision
-3. Basic create/update/read behavior
-4. Deletion/privacy considerations
-5. Clear relationship to the owning user
-
-Excludes:
-
-1. Application packet generation
-2. Resume tailoring
-3. Cover letter drafting
-4. Continuous monitoring
-5. Application tracking
-
-Definition of done:
-
-1. A user can store profile/resume context.
-2. The data is owned and isolated.
-3. The data can be retrieved for future agent work.
-4. No packet generation is added yet.
-5. Deletion and privacy implications are understood even if full account deletion is deferred.
-
-### Milestone 3: Job Fit and Job Understanding Layer
-
-Purpose:
-
-Connect user-owned profile/resume context to stored job detail evidence.
-
-This milestone may be implemented as its own layer or folded into the Application Packet Agent if keeping it separate becomes unnecessary. Decide after Milestone 2, not before.
-
-Includes:
-
-1. Fit analysis for a selected matched job
-2. Use of stored `job_details`, not ad hoc fetching
-3. Use of user-owned profile/resume context
-4. Strengths, gaps, risks, or fit notes
-5. Evidence-linked output
-
-Excludes:
-
-1. Full application packets
-2. Cover letters
-3. Resume rewrites
-4. Auto-apply behavior
-
-Definition of done:
-
-1. Surveyor can explain fit for a job using stored job detail and user context.
-2. The analysis is owned by the user.
-3. The analysis is traceable to source evidence.
-4. The output does not invent user background.
-
-### Milestone 4: Application Packet Agent
-
-Purpose:
-
-Generate truthful, user-reviewed application materials for a selected verified opportunity.
-
-Includes:
-
-1. Application packet entity
-2. Link to owning user
-3. Link to source job/detail evidence
-4. Link to source profile/resume evidence
-5. Generated materials such as summary, cover letter draft, or resume bullet suggestions
-6. Evidence metadata
-7. User review requirement
-
-Excludes:
-
-1. Automatic application submission
-2. Recruiter outreach
-3. Browser automation
-4. Referral intelligence
-5. Monitoring
-
-Definition of done:
-
-1. A user can generate an application packet for a verified matched job.
-2. The packet is grounded in stored user and job evidence.
-3. The packet is saved and reviewable.
-4. The system does not submit anything automatically.
-5. The system does not invent user experience.
-
-### Milestone 5: Saved Companies and Saved Searches
-
-Purpose:
-
-Let users define ongoing targets and reusable search intent.
-
-Includes:
-
-1. Saved companies
-2. Saved role/search preferences
-3. Relationship to user ownership
-4. Ability to initiate scanner runs from saved targets
-
-Excludes:
-
-1. Scheduled monitoring
-2. Notifications
-3. Application tracking
-4. Referral intelligence
-
-Definition of done:
-
-1. A user can save companies/searches.
-2. A user can reuse saved targets to start scanner runs.
-3. Saved data is user-owned and isolated.
-4. No background monitoring is added yet.
-
-### Milestone 6: Continuous Monitoring
-
-Purpose:
-
-Run saved searches repeatedly and surface new verified matches.
-
-Includes:
-
-1. Scheduled or repeat scan mechanism
-2. Saved search execution history
-3. New match detection
-4. Monitoring status/evidence
-5. Notification-ready events, if needed
-
-Excludes:
-
-1. Auto-apply
-2. Recruiter outreach
-3. Referral intelligence
-4. Social graph
-
-Definition of done:
-
-1. A saved search can run repeatedly.
-2. Surveyor can identify new verified matches.
-3. Monitoring results preserve scanner uncertainty rules.
-4. The user remains in control of next actions.
-
-### Milestone 7: Application Tracking
-
-Purpose:
-
-Track what the user did with verified opportunities and generated packets.
-
-Includes:
-
-1. Applications table/entity
-2. User ownership
-3. Link to job rows/job details
-4. Link to generated packets when available
-5. Status, notes, and dates
-
-Excludes:
-
-1. Automatic submission
-2. Browser automation
-3. Recruiter outreach
-4. Referral intelligence
-
-Definition of done:
-
-1. A user can track application status for a job.
-2. Tracking records are user-owned.
-3. Tracking can link back to the verified opportunity and application packet.
-
-## Parking lot: Referral Intelligence
-
-Referral intelligence remains parked.
-
-Do not implement:
-
-1. Social graph
-2. Mutual connections
-3. Private contact input
-4. Referral systems
+1. Social graphs
+2. Mutual connection discovery
+3. Private contact ingestion
+4. Referral request automation
 5. Public profiles
 6. Social feeds
-7. Referral request automation
-8. Recruiter outreach automation
+7. Recruiter outreach automation
 
-Future-compatible choices are allowed only when they do not add referral behavior now.
+Future-compatible data choices are acceptable only when they do not add referral behavior or unnecessary complexity.
 
-Examples of acceptable future-compatible choices:
+## How to use this document
 
-1. Keep companies normalizable later.
-2. Keep applications tied to jobs and companies.
-3. Keep accounts private by default.
-4. Avoid schema choices that would make referral features impossible later.
+Use this file to answer durable questions about:
 
-## Infrastructure decisions for Milestone 1
+1. The relationship between the Core Scanner and Agent Workflow
+2. Scanner protections that expansion work must preserve
+3. Evidence, ownership, privacy, and grounding expectations
+4. Broad capability boundaries
+5. Durable dependency principles
 
-Milestone 1 should begin with a short implementation design pass, not a broad strategy rewrite.
+Do not use this file to determine:
 
-Decisions needed before coding:
+1. The current implementation step
+2. Completed milestone status
+3. The next implementation task
+4. Whether a planned capability already exists in code
 
-1. Authentication approach
-2. Session model
-3. Whether SQLite remains acceptable for this milestone
-4. Migration strategy for adding user ownership to existing data
-5. Whether existing runs are backfilled to a default/admin/demo user
-6. API scoping pattern for current user
-7. Job detail endpoint scoping pattern
-8. Test strategy for cross-user isolation
-9. Local/demo versus deployable multi-user posture
+For those questions:
 
-These decisions should be made as part of Milestone 1, not as a separate fake milestone.
-
-The design pass should return a recommendation, not multiple open-ended alternatives unless there is a real blocker.
-
-## Recommended Milestone 1 implementation shape
-
-The first implementation prompt should ask for a design plan before code.
-
-It should inspect the current repo and propose the exact approach for:
-
-1. User/account schema
-2. Session/auth mechanism
-3. `runs.user_id` ownership
-4. Backfill behavior
-5. API request ownership boundary
-6. Run detail scoping
-7. Job detail endpoint scoping
-8. Worker compatibility
-9. Tests
-
-The implementation should remain narrow:
-
-1. Account-owned scanner data only
-2. No profile/resume memory
-3. No application packet generation
-4. No monitoring
-5. No saved searches
-6. No application tracking
-
-## Risks and tradeoffs
-
-### Risk: Over-building accounts
-
-Building full SaaS-grade auth, billing-like account structure, team support, password reset flows, and complex settings now would slow the project down.
-
-Mitigation:
-
-Build only the account/session layer needed for owned scanner data.
-
-### Risk: Under-building ownership
-
-Adding a fake owner placeholder that is not enforced by APIs could create drift and future rewrites.
-
-Mitigation:
-
-Milestone 1 must include real ownership enforcement and isolation tests.
-
-### Risk: Building profile/resume before ownership
-
-Profile and resume data are private. Adding them before ownership risks awkward migration and privacy holes.
-
-Mitigation:
-
-Ownership comes first.
-
-### Risk: Building packet generation before user context
-
-Application packets need user evidence and job evidence. The scanner now provides job evidence, but user evidence does not exist yet.
-
-Mitigation:
-
-Build profile/resume memory before packet generation.
-
-### Risk: Agent layer contaminates scanner truth
-
-Future AI outputs could accidentally reinterpret scanner states or hide uncertainty.
-
-Mitigation:
-
-Agents may consume scanner evidence, but must not change scanner finalization rules or result buckets.
-
-### Risk: Roadmap drift
-
-A long roadmap can become another source of confusion if it conflicts with the active implementation context.
-
-Mitigation:
-
-Use this file as the active execution context. Use `agentExpansionRoadmap.md` as supporting reference only.
-
-## What not to build next
-
-Do not build these in Milestone 1:
-
-1. Resume upload
-2. Profile memory
-3. Application packet generation
-4. Saved companies
-5. Saved searches
-6. Continuous monitoring
-7. Application tracking
-8. Referral intelligence
-9. Browser automation
-10. Dashboard redesign
-11. Parsed job requirements
-12. Job detail summarization
-13. Auto-apply
-14. Recruiter outreach
-
-## Next action
-
-Next implementation milestone:
-
-Milestone 1: Accounts and Owned Scanner Data
-
-Before coding, request a narrow implementation plan for this milestone only.
-
-The plan should not ask whether Agent Expansion is allowed. Gate 4 has passed.
-
-The plan should decide how to implement account-owned scanner data while preserving scanner behavior.
-
-The plan should treat Milestone 1 as one minimum meaningful product milestone, even if implementation is split into practical commits.
+1. Inspect the current repository code.
+2. Read the user's explicit request.
+3. Use `agentExpansionRoadmap.md` for broad planning.
+4. Use a separate checkpoint or implementation prompt for temporary progress state.
