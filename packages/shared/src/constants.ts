@@ -54,3 +54,18 @@ export const ApplicationPacketStatus = {
 
 export type ApplicationPacketStatus =
   (typeof ApplicationPacketStatus)[keyof typeof ApplicationPacketStatus];
+
+/**
+ * Local to monitoring_executions. Not a scanner run/company status.
+ * Derived from the linked scanner run: RUNNING while the run is
+ * CREATED/READY/RUNNING, COMPLETED when the run reaches COMPLETED, FAILED
+ * when the run reaches FAILED_ROLE_SPEC.
+ */
+export const MonitoringExecutionStatus = {
+  RUNNING: "RUNNING",
+  COMPLETED: "COMPLETED",
+  FAILED: "FAILED",
+} as const;
+
+export type MonitoringExecutionStatus =
+  (typeof MonitoringExecutionStatus)[keyof typeof MonitoringExecutionStatus];

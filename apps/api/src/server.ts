@@ -2,6 +2,7 @@ import express from "express";
 import 'dotenv/config';
 import { runRestartRecovery } from "./worker/restartRecovery.js";
 import { startWorkerLoop } from "./worker/startWorkerLoop.js";
+import { startMonitoringLoop } from "./monitoring/startMonitoringLoop.js";
 import { runsRouter } from "./routes/runs.js";
 import { jobDetailsRouter } from "./routes/jobDetails.js";
 import { authRouter } from "./routes/auth.js";
@@ -36,5 +37,6 @@ if (process.env.NODE_ENV !== "test") {
   app.listen(PORT, () => {
     runRestartRecovery();
     startWorkerLoop();
+    startMonitoringLoop();
   });
 }

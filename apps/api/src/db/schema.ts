@@ -211,9 +211,47 @@ export function ensureSchema(db: InstanceType<typeof Database>): void {
 
     CREATE INDEX IF NOT EXISTS idx_saved_search_companies_saved_search_id_input_index ON saved_search_companies(saved_search_id, input_index);
     CREATE INDEX IF NOT EXISTS idx_saved_search_companies_saved_company_id ON saved_search_companies(saved_company_id);
+
+    CREATE TABLE IF NOT EXISTS monitoring_executions (
+      id TEXT PRIMARY KEY,
+      saved_search_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      new_match_count INTEGER NOT NULL DEFAULT 0,
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_monitoring_executions_saved_search_id_started_at ON monitoring_executions(saved_search_id, started_at);
+    CREATE INDEX IF NOT EXISTS idx_monitoring_executions_user_id ON monitoring_executions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_monitoring_executions_run_id ON monitoring_executions(run_id);
+
+    CREATE TABLE IF NOT EXISTS monitoring_matches (
+      id TEXT PRIMARY KEY,
+      saved_search_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      job_key TEXT NOT NULL,
+      company_name TEXT NOT NULL,
+      title TEXT NOT NULL,
+      location TEXT NULL,
+      job_url TEXT NOT NULL,
+      first_seen_run_id TEXT NOT NULL,
+      first_seen_execution_id TEXT NOT NULL,
+      first_seen_at INTEGER NOT NULL,
+      last_seen_run_id TEXT NOT NULL,
+      last_seen_execution_id TEXT NOT NULL,
+      last_seen_at INTEGER NOT NULL,
+      seen_count INTEGER NOT NULL DEFAULT 1
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_matches_saved_search_id_job_key_unique ON monitoring_matches(saved_search_id, job_key);
+    CREATE INDEX IF NOT EXISTS idx_monitoring_matches_user_id ON monitoring_matches(user_id);
+    CREATE INDEX IF NOT EXISTS idx_monitoring_matches_saved_search_id ON monitoring_matches(saved_search_id);
   `);
 
   ensureRunsUserIdColumn(db);
+  ensureSavedSearchesMonitoringColumns(db);
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_runs_user_id ON runs(user_id);
@@ -230,5 +268,22 @@ function ensureRunsUserIdColumn(db: InstanceType<typeof Database>): void {
   const hasUserId = columns.some((column) => column.name === "user_id");
   if (!hasUserId) {
     db.exec(`ALTER TABLE runs ADD COLUMN user_id TEXT`);
+  }
+}
+
+/**
+ * saved_searches.monitoring_enabled/monitoring_last_checked_at are added via
+ * guarded ALTER TABLE, same pattern as ensureRunsUserIdColumn, since SQLite
+ * has no `ADD COLUMN IF NOT EXISTS`.
+ */
+function ensureSavedSearchesMonitoringColumns(db: InstanceType<typeof Database>): void {
+  const columns = db.prepare(`PRAGMA table_info(saved_searches)`).all() as { name: string }[];
+  const columnNames = columns.map((column) => column.name);
+
+  if (!columnNames.includes("monitoring_enabled")) {
+    db.exec(`ALTER TABLE saved_searches ADD COLUMN monitoring_enabled INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!columnNames.includes("monitoring_last_checked_at")) {
+    db.exec(`ALTER TABLE saved_searches ADD COLUMN monitoring_last_checked_at INTEGER`);
   }
 }

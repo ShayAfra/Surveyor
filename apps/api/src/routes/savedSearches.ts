@@ -1,5 +1,12 @@
 import { Router } from "express";
-import type { SavedSearchListResponse, SavedSearchResponse } from "@surveyor/shared";
+import type {
+  MonitoringConfigResponse,
+  MonitoringExecutionListResponse,
+  MonitoringMatchListResponse,
+  MonitoringRunNowResponse,
+  SavedSearchListResponse,
+  SavedSearchResponse,
+} from "@surveyor/shared";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth.js";
 import {
   SavedSearchRequestError,
@@ -11,6 +18,14 @@ import {
   startRunFromSavedSearch,
   updateSavedSearch,
 } from "../lib/savedSearches.js";
+import {
+  MonitoringRequestError,
+  getMonitoringConfig,
+  listMonitoringExecutions,
+  listMonitoringMatches,
+  setMonitoringEnabled,
+  triggerMonitoringExecution,
+} from "../lib/monitoring.js";
 
 export const savedSearchesRouter = Router();
 
@@ -102,6 +117,106 @@ savedSearchesRouter.post(
         return res.status(err.httpStatus).json({ error: err.message });
       }
       return res.status(500).json({ error: "failed to create run" });
+    }
+  }
+);
+
+savedSearchesRouter.get(
+  "/api/saved-searches/:id/monitoring",
+  requireAuth,
+  (req: AuthenticatedRequest, res) => {
+    const { id } = req.params;
+    const userId = req.userId as string;
+
+    try {
+      const config = getMonitoringConfig(userId, id);
+      return res.json(config satisfies MonitoringConfigResponse);
+    } catch (err) {
+      if (err instanceof MonitoringRequestError) {
+        return res.status(err.httpStatus).json({ error: err.message });
+      }
+      throw err;
+    }
+  }
+);
+
+savedSearchesRouter.put(
+  "/api/saved-searches/:id/monitoring",
+  requireAuth,
+  (req: AuthenticatedRequest, res) => {
+    const { id } = req.params;
+    const userId = req.userId as string;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    if (typeof body.enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled must be a boolean" });
+    }
+
+    try {
+      const config = setMonitoringEnabled(userId, id, body.enabled);
+      return res.json(config satisfies MonitoringConfigResponse);
+    } catch (err) {
+      if (err instanceof MonitoringRequestError) {
+        return res.status(err.httpStatus).json({ error: err.message });
+      }
+      throw err;
+    }
+  }
+);
+
+savedSearchesRouter.get(
+  "/api/saved-searches/:id/monitoring/executions",
+  requireAuth,
+  (req: AuthenticatedRequest, res) => {
+    const { id } = req.params;
+    const userId = req.userId as string;
+
+    try {
+      const executions: MonitoringExecutionListResponse = listMonitoringExecutions(userId, id);
+      return res.json(executions);
+    } catch (err) {
+      if (err instanceof MonitoringRequestError) {
+        return res.status(err.httpStatus).json({ error: err.message });
+      }
+      throw err;
+    }
+  }
+);
+
+savedSearchesRouter.get(
+  "/api/saved-searches/:id/monitoring/matches",
+  requireAuth,
+  (req: AuthenticatedRequest, res) => {
+    const { id } = req.params;
+    const userId = req.userId as string;
+
+    try {
+      const matches: MonitoringMatchListResponse = listMonitoringMatches(userId, id);
+      return res.json(matches);
+    } catch (err) {
+      if (err instanceof MonitoringRequestError) {
+        return res.status(err.httpStatus).json({ error: err.message });
+      }
+      throw err;
+    }
+  }
+);
+
+savedSearchesRouter.post(
+  "/api/saved-searches/:id/monitoring/run-now",
+  requireAuth,
+  (req: AuthenticatedRequest, res) => {
+    const { id } = req.params;
+    const userId = req.userId as string;
+
+    try {
+      const { execution, runId } = triggerMonitoringExecution(userId, id);
+      return res.status(201).json({ execution, runId } satisfies MonitoringRunNowResponse);
+    } catch (err) {
+      if (err instanceof MonitoringRequestError) {
+        return res.status(err.httpStatus).json({ error: err.message });
+      }
+      return res.status(500).json({ error: "failed to start monitoring run" });
     }
   }
 );

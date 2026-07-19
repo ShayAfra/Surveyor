@@ -6,6 +6,7 @@ import type {
 } from "@surveyor/shared";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import SavedSearchMonitoring from "./SavedSearchMonitoring.js";
 
 interface SavedPageProps {
   onLoggedOut: () => void;
@@ -417,6 +418,7 @@ export default function SavedPage({ onLoggedOut }: SavedPageProps) {
                       Delete
                     </button>
                   </div>
+                  <SavedSearchMonitoring savedSearchId={search.id} onLoggedOut={onLoggedOut} />
                 </li>
               ))}
             </ul>

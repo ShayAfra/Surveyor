@@ -3,6 +3,7 @@ import type {
   AtsType,
   CompanyStatus,
   FitAnalysisStatus,
+  MonitoringExecutionStatus,
   ProfileItemType,
   RunStatus,
 } from "./constants.js";
@@ -176,3 +177,40 @@ export interface SavedSearchResponse {
 }
 
 export type SavedSearchListResponse = SavedSearchResponse[];
+
+export interface MonitoringConfigResponse {
+  enabled: boolean;
+  last_checked_at: number | null;
+}
+
+export interface MonitoringExecutionResponse {
+  id: string;
+  run_id: string;
+  status: MonitoringExecutionStatus;
+  new_match_count: number;
+  started_at: number;
+  finished_at: number | null;
+}
+
+export type MonitoringExecutionListResponse = MonitoringExecutionResponse[];
+
+export interface MonitoringMatchResponse {
+  id: string;
+  job_key: string;
+  company_name: string;
+  title: string;
+  location: string | null;
+  job_url: string;
+  first_seen_run_id: string;
+  last_seen_run_id: string;
+  first_seen_at: number;
+  last_seen_at: number;
+  seen_count: number;
+}
+
+export type MonitoringMatchListResponse = MonitoringMatchResponse[];
+
+export interface MonitoringRunNowResponse {
+  execution: MonitoringExecutionResponse;
+  runId: string;
+}

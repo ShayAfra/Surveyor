@@ -13,7 +13,7 @@ export class SavedSearchRequestError extends Error {
   }
 }
 
-interface SavedSearchRow {
+export interface SavedSearchRow {
   id: string;
   user_id: string;
   name: string;
@@ -22,6 +22,8 @@ interface SavedSearchRow {
   notes: string | null;
   created_at: number;
   updated_at: number;
+  monitoring_enabled: number;
+  monitoring_last_checked_at: number | null;
 }
 
 interface SavedSearchCompanyRow {
@@ -275,10 +277,13 @@ export function updateSavedSearch(
 }
 
 /**
- * Hard-deletes an owned saved search and its saved_search_companies rows in
- * one transaction (no DB-level cascade in this schema). Never touches past
- * runs/run_companies created from this saved search - those are independent
- * snapshots. Returns true if a saved search was actually deleted.
+ * Hard-deletes an owned saved search, its saved_search_companies rows, and
+ * its monitoring_executions/monitoring_matches rows in one transaction (no
+ * DB-level cascade in this schema - application-level cleanup instead).
+ * Never touches past runs/run_companies created from this saved search
+ * (including monitoring-triggered runs) - those are independent scanner
+ * evidence that outlives the saved search. Returns true if a saved search
+ * was actually deleted.
  */
 export function deleteSavedSearch(userId: string, savedSearchId: string): boolean {
   const existing = getOwnedSavedSearchRow(userId, savedSearchId);
@@ -287,6 +292,8 @@ export function deleteSavedSearch(userId: string, savedSearchId: string): boolea
   }
 
   const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM monitoring_matches WHERE saved_search_id = ?`).run(savedSearchId);
+    db.prepare(`DELETE FROM monitoring_executions WHERE saved_search_id = ?`).run(savedSearchId);
     db.prepare(`DELETE FROM saved_search_companies WHERE saved_search_id = ?`).run(savedSearchId);
     db.prepare(`DELETE FROM saved_searches WHERE id = ? AND user_id = ?`).run(
       savedSearchId,

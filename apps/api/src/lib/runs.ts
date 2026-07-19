@@ -23,14 +23,22 @@ export interface CreateRunForUserResult {
   runId: string;
 }
 
+/** Validated, insert-ready run creation input. */
+export interface ValidatedRunCreationInput {
+  userId: string;
+  role: string;
+  includeAdjacent: boolean;
+  trimmedCompanies: string[];
+}
+
 /**
- * Validates and durably creates a run + run_companies rows for userId. This is
- * the single implementation shared by POST /api/runs and
- * POST /api/saved-searches/:id/runs so both preserve identical validation and
- * insert behavior. Never starts scanner work: role_spec_json stays null, no
- * company is marked IN_PROGRESS, and no LLM call happens here.
+ * Validates raw run-creation input without touching the database. Preserves
+ * the exact validation rules and error messages createRunForUser has always
+ * used (role.trim() non-empty, includeAdjacent boolean, 1-10 companies, each
+ * trimmed non-empty). Shared by createRunForUser and
+ * triggerMonitoringExecution so both use one validation path.
  */
-export function createRunForUser(input: CreateRunForUserInput): CreateRunForUserResult {
+export function validateRunCreationInput(input: CreateRunForUserInput): ValidatedRunCreationInput {
   const { userId, role, includeAdjacent, companies } = input;
 
   if (typeof role !== "string") {
@@ -67,6 +75,22 @@ export function createRunForUser(input: CreateRunForUserInput): CreateRunForUser
 
     trimmedCompanies.push(trimmedCompany);
   }
+
+  // role_raw storage has always used the original (untrimmed) role string;
+  // preserved exactly here.
+  return { userId, role, includeAdjacent, trimmedCompanies };
+}
+
+/**
+ * Inserts a runs row (CREATED, role_spec_json null) and one run_companies row
+ * per company (PENDING) for already-validated input. Does not open its own
+ * transaction - callers run this inside their own db.transaction() so it can
+ * be composed with other writes (e.g. triggerMonitoringExecution inserting a
+ * monitoring_executions row atomically). Does not call the LLM, does not
+ * touch role_spec_json beyond inserting null, does not process scanner work.
+ */
+export function insertCreatedRunForUser(validated: ValidatedRunCreationInput): CreateRunForUserResult {
+  const { userId, role, includeAdjacent, trimmedCompanies } = validated;
 
   const runId = randomUUID();
   const nowMs = Date.now();
@@ -108,30 +132,44 @@ export function createRunForUser(input: CreateRunForUserInput): CreateRunForUser
     ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
   `);
 
-  const createRunTx = db.transaction(() => {
-    insertRun.run(
+  insertRun.run(
+    runId,
+    nowMs,
+    RunStatus.CREATED,
+    role,
+    includeAdjacent ? 1 : 0,
+    trimmedCompanies.length,
+    userId
+  );
+
+  for (let index = 0; index < trimmedCompanies.length; index += 1) {
+    insertCompany.run(
+      randomUUID(),
       runId,
-      nowMs,
-      RunStatus.CREATED,
-      role,
-      includeAdjacent ? 1 : 0,
-      trimmedCompanies.length,
-      userId
+      trimmedCompanies[index],
+      index,
+      CompanyStatus.PENDING,
+      nowMs
     );
-
-    for (let index = 0; index < trimmedCompanies.length; index += 1) {
-      insertCompany.run(
-        randomUUID(),
-        runId,
-        trimmedCompanies[index],
-        index,
-        CompanyStatus.PENDING,
-        nowMs
-      );
-    }
-  });
-
-  createRunTx();
+  }
 
   return { runId };
+}
+
+/**
+ * Validates and durably creates a run + run_companies rows for userId. This is
+ * the single implementation shared by POST /api/runs and
+ * POST /api/saved-searches/:id/runs so both preserve identical validation and
+ * insert behavior. Never starts scanner work: role_spec_json stays null, no
+ * company is marked IN_PROGRESS, and no LLM call happens here. Wraps
+ * insertCreatedRunForUser in its own transaction - callers that need run
+ * creation composed with other writes in one larger transaction should call
+ * validateRunCreationInput + insertCreatedRunForUser directly instead.
+ */
+export function createRunForUser(input: CreateRunForUserInput): CreateRunForUserResult {
+  const validated = validateRunCreationInput(input);
+
+  const createRunTx = db.transaction(() => insertCreatedRunForUser(validated));
+
+  return createRunTx();
 }
