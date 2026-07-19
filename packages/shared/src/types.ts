@@ -1,5 +1,6 @@
 import type {
   ApplicationPacketStatus,
+  ApplicationTrackingStatus,
   AtsType,
   CompanyStatus,
   FitAnalysisStatus,
@@ -214,3 +215,31 @@ export interface MonitoringRunNowResponse {
   execution: MonitoringExecutionResponse;
   runId: string;
 }
+
+export interface ApplicationLinkedPacketSummary {
+  id: string;
+  status: ApplicationPacketStatus;
+  created_at: number;
+}
+
+export interface ApplicationResponse {
+  id: string;
+  job_row_id: string;
+  run_id: string;
+  application_packet_id: string | null;
+  linked_packet: ApplicationLinkedPacketSummary | null;
+  status: ApplicationTrackingStatus;
+  company_name: string;
+  job_title: string;
+  job_url: string;
+  job_location: string | null;
+  notes: string | null;
+  applied_at: number | null;
+  follow_up_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export type ApplicationListResponse = ApplicationResponse[];
+
+export type ApplicationJobApplicationsResponse = ApplicationResponse[];

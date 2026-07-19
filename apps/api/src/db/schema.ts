@@ -248,6 +248,29 @@ export function ensureSchema(db: InstanceType<typeof Database>): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_matches_saved_search_id_job_key_unique ON monitoring_matches(saved_search_id, job_key);
     CREATE INDEX IF NOT EXISTS idx_monitoring_matches_user_id ON monitoring_matches(user_id);
     CREATE INDEX IF NOT EXISTS idx_monitoring_matches_saved_search_id ON monitoring_matches(saved_search_id);
+
+    CREATE TABLE IF NOT EXISTS applications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      job_row_id TEXT NOT NULL,
+      application_packet_id TEXT NULL,
+      status TEXT NOT NULL,
+      job_key TEXT NOT NULL,
+      company_name TEXT NOT NULL,
+      job_title TEXT NOT NULL,
+      job_url TEXT NOT NULL,
+      job_location TEXT NULL,
+      notes TEXT NULL,
+      applied_at INTEGER NULL,
+      follow_up_at INTEGER NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_applications_user_id ON applications(user_id);
+    CREATE INDEX IF NOT EXISTS idx_applications_job_row_id ON applications(job_row_id);
+    CREATE INDEX IF NOT EXISTS idx_applications_application_packet_id ON applications(application_packet_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_applications_user_id_job_key_unique ON applications(user_id, job_key);
   `);
 
   ensureRunsUserIdColumn(db);

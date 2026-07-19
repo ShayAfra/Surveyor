@@ -17,6 +17,8 @@ import {
 } from "./csvExport.js";
 import ProfilePage from "./ProfilePage.js";
 import SavedPage from "./SavedPage.js";
+import ApplicationsPage from "./ApplicationsPage.js";
+import ApplicationTracking from "./ApplicationTracking.js";
 
 type HealthState =
   | { status: "loading" }
@@ -241,6 +243,7 @@ function HomePage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () => vo
           <span>{user.email}</span>{" "}
           <Link to="/profile">Profile</Link>{" "}
           <Link to="/saved">Saved</Link>{" "}
+          <Link to="/applications">Applications</Link>{" "}
           <button type="button" onClick={handleLogout}>
             Log out
           </button>
@@ -636,6 +639,13 @@ function ApplicationPacket({ jobRowId, onLoggedOut }: { jobRowId: string; onLogg
               <button type="button" onClick={() => handleDelete(latest.id)}>
                 Delete this packet
               </button>
+              {latest.status !== "FAILED" && (
+                <ApplicationTracking
+                  jobRowId={jobRowId}
+                  applicationPacketId={latest.id}
+                  onLoggedOut={onLoggedOut}
+                />
+              )}
             </div>
           )}
 
@@ -870,6 +880,7 @@ function RunDetailPage({ onLoggedOut }: { onLoggedOut: () => void }) {
                                 {j.match_reason && ` · ${j.match_reason}`}
                                 <JobFitAnalysis jobRowId={j.id} onLoggedOut={onLoggedOut} />
                                 <ApplicationPacket jobRowId={j.id} onLoggedOut={onLoggedOut} />
+                                <ApplicationTracking jobRowId={j.id} onLoggedOut={onLoggedOut} />
                               </li>
                             ))}
                           </ul>
@@ -963,6 +974,7 @@ export default function App() {
       <Route path="/runs/:id" element={<RunDetailPage onLoggedOut={handleLoggedOut} />} />
       <Route path="/profile" element={<ProfilePage onLoggedOut={handleLoggedOut} />} />
       <Route path="/saved" element={<SavedPage onLoggedOut={handleLoggedOut} />} />
+      <Route path="/applications" element={<ApplicationsPage onLoggedOut={handleLoggedOut} />} />
     </Routes>
   );
 }

@@ -195,11 +195,13 @@ describe("no unscoped scheduling columns or non-monitoring tracking/referral tab
     expect(table).toBeUndefined();
   });
 
-  it("no notification_events / application tracking / referral / recruiter / browser automation tables exist", () => {
+  it("no notification_events / referral / recruiter / browser automation tables exist", () => {
+    // "applications" (Milestone 7 application tracking) is intentionally NOT
+    // asserted absent here anymore — see applications.schema.test.ts, which
+    // asserts it exists with the expected shape.
     const names = (
       db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all() as { name: string }[]
     ).map((r) => r.name);
-    expect(names).not.toContain("applications");
     expect(names).not.toContain("referrals");
     expect(names).not.toContain("recruiters");
     expect(names).not.toContain("notifications");

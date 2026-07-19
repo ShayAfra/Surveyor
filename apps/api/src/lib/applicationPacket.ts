@@ -747,10 +747,28 @@ export function getOwnedApplicationPacket(
   return row ? toApplicationPacketResponse(row) : undefined;
 }
 
-/** Returns true if a row was actually deleted (i.e. it existed and was owned by userId). */
+/**
+ * Returns true if a row was actually deleted (i.e. it existed and was owned
+ * by userId). Any applications rows referencing this packet have
+ * application_packet_id nulled out in the same transaction (Milestone 7:
+ * application tracking must never be left with a dangling packet id, and the
+ * application record itself must never be deleted as a side effect of
+ * deleting the packet it was linked to).
+ */
 export function deleteApplicationPacket(userId: string, packetId: string): boolean {
-  const result = db
-    .prepare(`DELETE FROM application_packets WHERE id = ? AND user_id = ?`)
-    .run(packetId, userId);
-  return result.changes > 0;
+  const tx = db.transaction(() => {
+    const result = db
+      .prepare(`DELETE FROM application_packets WHERE id = ? AND user_id = ?`)
+      .run(packetId, userId);
+
+    if (result.changes > 0) {
+      db.prepare(
+        `UPDATE applications SET application_packet_id = NULL, updated_at = ? WHERE application_packet_id = ? AND user_id = ?`
+      ).run(Date.now(), packetId, userId);
+    }
+
+    return result.changes > 0;
+  });
+
+  return tx();
 }

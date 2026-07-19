@@ -11,6 +11,7 @@ import { fitAnalysisRouter } from "./routes/fitAnalysis.js";
 import { applicationPacketRouter } from "./routes/applicationPacket.js";
 import { savedCompaniesRouter } from "./routes/savedCompanies.js";
 import { savedSearchesRouter } from "./routes/savedSearches.js";
+import { applicationsRouter } from "./routes/applications.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? "3000");
@@ -24,6 +25,7 @@ app.use(fitAnalysisRouter);
 app.use(applicationPacketRouter);
 app.use(savedCompaniesRouter);
 app.use(savedSearchesRouter);
+app.use(applicationsRouter);
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });

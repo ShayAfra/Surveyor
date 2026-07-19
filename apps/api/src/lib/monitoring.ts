@@ -12,6 +12,7 @@ import {
   validateRunCreationInput,
 } from "./runs.js";
 import { getOwnedSavedSearchRow, type SavedSearchRow } from "./savedSearches.js";
+import { computeJobKey } from "./jobIdentity.js";
 
 /** Thrown for monitoring request problems that must not create/update a row. */
 export class MonitoringRequestError extends Error {
@@ -246,54 +247,11 @@ export function listMonitoringMatches(
   return rows.map(toMonitoringMatchResponse);
 }
 
-// ---- Job identity / URL normalization -------------------------------------------------
-
-/**
- * Conservative job identity key: normalized URL when parseable, otherwise a
- * fallback of company_name + normalized title + normalized location. Kept
- * intentionally simple - this is a dedupe key, not a canonicalization system.
- */
-export function computeJobKey(input: {
-  companyName: string;
-  title: string;
-  location: string | null;
-  url: string;
-}): string {
-  const normalizedUrl = normalizeJobUrl(input.url);
-  if (normalizedUrl) {
-    return `url:${normalizedUrl}`;
-  }
-  return `fallback:${normalizeText(input.companyName)}|${normalizeText(input.title)}|${normalizeText(input.location ?? "")}`;
-}
-
-function normalizeText(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-/**
- * Returns a normalized URL key for a valid, parseable URL, or null when the
- * URL is empty or unparseable - callers must fall back to the
- * company/title/location key in that case, never to the lowercased raw
- * string (an invalid URL is not a stable identity).
- */
-function normalizeJobUrl(rawUrl: string): string | null {
-  const trimmed = rawUrl.trim();
-  if (trimmed.length === 0) {
-    return null;
-  }
-  try {
-    const parsed = new URL(trimmed);
-    const protocol = parsed.protocol.toLowerCase();
-    const host = parsed.host.toLowerCase();
-    let pathname = parsed.pathname;
-    if (pathname.length > 1 && pathname.endsWith("/")) {
-      pathname = pathname.slice(0, -1);
-    }
-    return `${protocol}//${host}${pathname}`;
-  } catch {
-    return null;
-  }
-}
+// Job identity / URL normalization now lives in ./jobIdentity.ts (shared with
+// application tracking). computeJobKey is imported above and re-exported
+// here so any existing importer of computeJobKey from monitoring.js keeps
+// working unchanged.
+export { computeJobKey };
 
 // ---- New match detection ----------------------------------------------------------------
 

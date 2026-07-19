@@ -69,3 +69,20 @@ export const MonitoringExecutionStatus = {
 
 export type MonitoringExecutionStatus =
   (typeof MonitoringExecutionStatus)[keyof typeof MonitoringExecutionStatus];
+
+/**
+ * Local to applications (application tracking). Not a scanner run/company
+ * status and not ApplicationPacketStatus. Transitions are not enforced —
+ * the user manually records what happened in any order.
+ */
+export const ApplicationTrackingStatus = {
+  SAVED: "SAVED",
+  APPLIED: "APPLIED",
+  INTERVIEWING: "INTERVIEWING",
+  OFFER: "OFFER",
+  REJECTED: "REJECTED",
+  WITHDRAWN: "WITHDRAWN",
+} as const;
+
+export type ApplicationTrackingStatus =
+  (typeof ApplicationTrackingStatus)[keyof typeof ApplicationTrackingStatus];
