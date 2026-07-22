@@ -5,10 +5,17 @@ import type {
 } from "@surveyor/shared";
 import { ProfileItemType } from "@surveyor/shared";
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import AppHeader, { type AuthUser } from "./AppHeader.js";
 
 interface ProfilePageProps {
+  user: AuthUser;
   onLoggedOut: () => void;
+}
+
+/** Only allow an internal run path as a return target — never an arbitrary redirect. */
+function validReturnPath(path: string | null): string | null {
+  return path != null && /^\/runs\/[A-Za-z0-9_-]+$/.test(path) ? path : null;
 }
 
 type LoadState =
@@ -43,7 +50,9 @@ function emptyItemForm() {
   };
 }
 
-export default function ProfilePage({ onLoggedOut }: ProfilePageProps) {
+export default function ProfilePage({ user, onLoggedOut }: ProfilePageProps) {
+  const [searchParams] = useSearchParams();
+  const returnTo = validReturnPath(searchParams.get("returnTo"));
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [profileForm, setProfileForm] = useState(emptyProfileForm(null));
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -306,10 +315,17 @@ export default function ProfilePage({ onLoggedOut }: ProfilePageProps) {
 
   return (
     <main>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h1>Profile</h1>
-        <Link to="/">Back to Run</Link>
-      </div>
+      <AppHeader user={user} onLoggedOut={onLoggedOut} />
+      <h1>Profile</h1>
+      {returnTo != null && (
+        <p>
+          <Link to={returnTo}>Return to this run</Link>
+        </p>
+      )}
+      <p className="muted">
+        Your profile and resume give fit analysis and application packets something to compare
+        stored job evidence against. Nothing here is shared or submitted anywhere.
+      </p>
 
       {state.status === "loading" && <p>Loading…</p>}
       {state.status === "error" && <p role="alert">{state.message}</p>}

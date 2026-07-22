@@ -1,4 +1,4 @@
-import type { ApplicationListResponse } from "@surveyor/shared";
+import type { ApplicationListResponse, ApplicationPacketListResponse } from "@surveyor/shared";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -49,11 +49,41 @@ export default function ApplicationTracking({
     setError(null);
     setCreating(true);
     try {
+      // Resolve which packet to link. If the parent already handed us one, use
+      // it. Otherwise look up existing packets for this job now so a completed
+      // packet is linked reliably — even if the packet panel was never opened.
+      // If this lookup fails we abort without creating an unlinked application.
+      let packetIdToLink: string | null = applicationPacketId ?? null;
+      if (packetIdToLink === null) {
+        let packets: ApplicationPacketListResponse;
+        try {
+          const packetsRes = await fetch(
+            `/api/jobs/${encodeURIComponent(jobRowId)}/application-packets`,
+          );
+          if (packetsRes.status === 401) {
+            onLoggedOut();
+            return;
+          }
+          if (!packetsRes.ok) {
+            setError(`Could not check for a completed packet (${packetsRes.status})`);
+            return;
+          }
+          packets = (await packetsRes.json()) as ApplicationPacketListResponse;
+        } catch {
+          setError("Could not check for a completed packet");
+          return;
+        }
+        // List is ordered newest first, so the first COMPLETED packet is the
+        // newest completed one.
+        const newestCompleted = packets.find((p) => p.status === "COMPLETED") ?? null;
+        packetIdToLink = newestCompleted ? newestCompleted.id : null;
+      }
+
       const res = await fetch(`/api/jobs/${encodeURIComponent(jobRowId)}/applications`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
-          applicationPacketId ? { application_packet_id: applicationPacketId } : {}
+          packetIdToLink ? { application_packet_id: packetIdToLink } : {}
         ),
       });
       if (res.status === 401) {

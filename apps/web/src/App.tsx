@@ -19,17 +19,12 @@ import ProfilePage from "./ProfilePage.js";
 import SavedPage from "./SavedPage.js";
 import ApplicationsPage from "./ApplicationsPage.js";
 import ApplicationTracking from "./ApplicationTracking.js";
+import AppHeader, { type AuthUser } from "./AppHeader.js";
 
 type HealthState =
   | { status: "loading" }
   | { status: "ok"; body: { ok: boolean } }
   | { status: "error"; message: string };
-
-interface AuthUser {
-  id: string;
-  email: string;
-  created_at: number;
-}
 
 type AuthGateState =
   | { status: "loading" }
@@ -87,6 +82,11 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (user: AuthUser) => v
   return (
     <main>
       <h1>Surveyor</h1>
+      <p>
+        Surveyor checks official company careers sources, helps you understand verified
+        opportunities, prepares evidence-grounded application materials, and keeps your next steps
+        organized.
+      </p>
       <section aria-labelledby="auth-heading">
         <h2 id="auth-heading">{mode === "login" ? "Log in" : "Sign up"}</h2>
         <form onSubmit={handleSubmit}>
@@ -230,36 +230,35 @@ function HomePage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () => vo
     }
   }
 
-  async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    onLoggedOut();
-  }
-
   return (
     <main>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h1>Surveyor</h1>
-        <div>
-          <span>{user.email}</span>{" "}
-          <Link to="/profile">Profile</Link>{" "}
-          <Link to="/saved">Saved</Link>{" "}
-          <Link to="/applications">Applications</Link>{" "}
-          <button type="button" onClick={handleLogout}>
-            Log out
-          </button>
-        </div>
-      </div>
-      <p>Web app is running.</p>
-      {health.status === "loading" && <p>Checking API…</p>}
-      {health.status === "ok" && (
-        <p>API /health: {JSON.stringify(health.body)}</p>
-      )}
+      <AppHeader user={user} onLoggedOut={onLoggedOut} />
+      <h1>Surveyor</h1>
       {health.status === "error" && (
-        <p role="alert">API /health failed: {health.message}</p>
+        <p role="alert">
+          Surveyor’s API is unavailable right now ({health.message}). Scans cannot start until it
+          reconnects.
+        </p>
       )}
 
+      <section aria-labelledby="how-it-works-heading" className="info-box">
+        <h2 id="how-it-works-heading">How Surveyor works</h2>
+        <p>
+          Enter one role and 1–10 target companies. Surveyor checks official careers sources and
+          reports matches, completed scans with no matching role, or results it could not
+          confidently verify.
+        </p>
+        <ol>
+          <li>Add profile and resume context.</li>
+          <li>Start a scan for one role across up to 10 companies.</li>
+          <li>Review matches, no matches, and unverified results.</li>
+          <li>Analyze fit and generate an application packet.</li>
+          <li>Save searches, monitor new matches, and track applications.</li>
+        </ol>
+      </section>
+
       <section aria-labelledby="run-form-heading">
-        <h2 id="run-form-heading">Run</h2>
+        <h2 id="run-form-heading">Start a scan</h2>
         <form onSubmit={handleSubmit}>
           <div>
             <label htmlFor="run-role">Role</label>
@@ -296,7 +295,7 @@ function HomePage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () => vo
             <p role="alert">{submitError}</p>
           )}
           <button type="submit" disabled={submitting}>
-            {submitting ? "Submitting…" : "Run"}
+            {submitting ? "Submitting…" : "Start scan"}
           </button>
         </form>
       </section>
@@ -308,12 +307,21 @@ function sortCompaniesByInputIndex(companies: RunCompanyResponse[]): RunCompanyR
   return [...companies].sort((a, b) => a.input_index - b.input_index);
 }
 
-function isRunActive(status: string): boolean {
-  return (
-    status === RunStatus.CREATED ||
-    status === RunStatus.READY ||
-    status === RunStatus.RUNNING
-  );
+/** Plain-language description of a persisted run status (does not change the status). */
+function runStatusPlainLanguage(status: string): string {
+  switch (status) {
+    case RunStatus.CREATED:
+    case RunStatus.READY:
+      return "Preparing to scan";
+    case RunStatus.RUNNING:
+      return "Scanning in progress";
+    case RunStatus.COMPLETED:
+      return "Scan complete";
+    case RunStatus.FAILED_ROLE_SPEC:
+      return "Could not interpret the role";
+    default:
+      return status;
+  }
 }
 
 /** Renders persisted company evidence only (no inferred state). */
@@ -376,7 +384,15 @@ function EvidenceItemList({ items }: { items: { text: string; evidence: string }
 }
 
 /** Fetches, generates, and displays fit analyses for one matched job. Minimal, additive to the run view. */
-function JobFitAnalysis({ jobRowId, onLoggedOut }: { jobRowId: string; onLoggedOut: () => void }) {
+function JobFitAnalysis({
+  jobRowId,
+  onLoggedOut,
+  profileHref,
+}: {
+  jobRowId: string;
+  onLoggedOut: () => void;
+  profileHref: string;
+}) {
   const [analyses, setAnalyses] = useState<FitAnalysisResponse[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -456,6 +472,10 @@ function JobFitAnalysis({ jobRowId, onLoggedOut }: { jobRowId: string; onLoggedO
       </button>
       {expanded && (
         <div style={{ marginLeft: "1rem", marginTop: "0.5rem" }}>
+          <p className="muted">
+            Compare stored job evidence with your profile or resume. Fit analysis does not change the
+            scanner result.
+          </p>
           <button type="button" onClick={handleAnalyze} disabled={loading}>
             {loading ? "Analyzing…" : "Generate new analysis"}
           </button>
@@ -495,7 +515,7 @@ function JobFitAnalysis({ jobRowId, onLoggedOut }: { jobRowId: string; onLoggedO
 
           {error != null && error.toLowerCase().includes("no usable profile or resume") && (
             <p>
-              <Link to="/profile">Add profile or resume information</Link> to enable fit analysis.
+              <Link to={profileHref}>Add profile or resume information</Link> to enable fit analysis.
             </p>
           )}
 
@@ -517,7 +537,17 @@ function JobFitAnalysis({ jobRowId, onLoggedOut }: { jobRowId: string; onLoggedO
   );
 }
 
-function ApplicationPacket({ jobRowId, onLoggedOut }: { jobRowId: string; onLoggedOut: () => void }) {
+function ApplicationPacket({
+  jobRowId,
+  onLoggedOut,
+  profileHref,
+  onLatestCompletedPacket,
+}: {
+  jobRowId: string;
+  onLoggedOut: () => void;
+  profileHref: string;
+  onLatestCompletedPacket: (packetId: string | null) => void;
+}) {
   const [packets, setPackets] = useState<ApplicationPacketResponse[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -546,6 +576,20 @@ function ApplicationPacket({ jobRowId, onLoggedOut }: { jobRowId: string; onLogg
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expanded]);
+
+  // Report the newest COMPLETED packet upward so the single job-level tracking
+  // control can link it. The list is ordered newest first, so the first
+  // COMPLETED packet is the newest completed one — a newer FAILED packet must
+  // not hide an older completed packet. Keeps packet linkage without a
+  // competing control here.
+  useEffect(() => {
+    if (packets === null) {
+      return;
+    }
+    const newestCompleted = packets.find((p) => p.status === "COMPLETED") ?? null;
+    onLatestCompletedPacket(newestCompleted ? newestCompleted.id : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [packets]);
 
   async function handleGenerate() {
     setError(null);
@@ -594,7 +638,10 @@ function ApplicationPacket({ jobRowId, onLoggedOut }: { jobRowId: string; onLogg
       </button>
       {expanded && (
         <div style={{ marginLeft: "1rem", marginTop: "0.5rem" }}>
-          <p>Generated from stored evidence. Review before using.</p>
+          <p className="muted">
+            Create draft materials from stored job and user evidence. Review everything before use;
+            Surveyor never submits applications.
+          </p>
           <button type="button" onClick={handleGenerate} disabled={loading}>
             {loading ? "Generating…" : "Generate new packet"}
           </button>
@@ -639,13 +686,6 @@ function ApplicationPacket({ jobRowId, onLoggedOut }: { jobRowId: string; onLogg
               <button type="button" onClick={() => handleDelete(latest.id)}>
                 Delete this packet
               </button>
-              {latest.status !== "FAILED" && (
-                <ApplicationTracking
-                  jobRowId={jobRowId}
-                  applicationPacketId={latest.id}
-                  onLoggedOut={onLoggedOut}
-                />
-              )}
             </div>
           )}
 
@@ -653,7 +693,7 @@ function ApplicationPacket({ jobRowId, onLoggedOut }: { jobRowId: string; onLogg
 
           {error != null && error.toLowerCase().includes("no usable profile or resume") && (
             <p>
-              <Link to="/profile">Add profile or resume information</Link> to enable application
+              <Link to={profileHref}>Add profile or resume information</Link> to enable application
               packet generation.
             </p>
           )}
@@ -676,7 +716,62 @@ function ApplicationPacket({ jobRowId, onLoggedOut }: { jobRowId: string; onLogg
   );
 }
 
-function RunDetailPage({ onLoggedOut }: { onLoggedOut: () => void }) {
+/**
+ * One matched job with its fit / packet / tracking tools in a clear order.
+ * Holds the newest completed packet id so a single tracking control can link
+ * it — there is exactly one tracking control per matched job.
+ */
+function MatchedJob({
+  job,
+  onLoggedOut,
+  profileHref,
+}: {
+  job: JobRowResponse;
+  onLoggedOut: () => void;
+  profileHref: string;
+}) {
+  const [latestCompletedPacketId, setLatestCompletedPacketId] = useState<string | null>(null);
+
+  return (
+    <li>
+      <a href={job.url} target="_blank" rel="noreferrer">
+        {job.title}
+      </a>
+      {job.location != null && job.location !== "" && ` · ${job.location}`}
+      {job.match_reason && ` · ${job.match_reason}`}
+      {job.job_detail_available ? (
+        <p className="muted">Full job detail recorded.</p>
+      ) : job.job_detail_failure_code != null || job.job_detail_failure_reason != null ? (
+        <p className="muted">
+          Job detail fetch failed, but the matched job is still recorded as scanner evidence.
+        </p>
+      ) : null}
+      <p className="muted">
+        For each match: understand the verified match, analyze fit, prepare a packet, then track the
+        application.
+      </p>
+      <JobFitAnalysis jobRowId={job.id} onLoggedOut={onLoggedOut} profileHref={profileHref} />
+      <ApplicationPacket
+        jobRowId={job.id}
+        onLoggedOut={onLoggedOut}
+        profileHref={profileHref}
+        onLatestCompletedPacket={setLatestCompletedPacketId}
+      />
+      <div>
+        <p className="muted">
+          Tracking records your own next steps. Surveyor does not submit applications.
+        </p>
+        <ApplicationTracking
+          jobRowId={job.id}
+          applicationPacketId={latestCompletedPacketId ?? undefined}
+          onLoggedOut={onLoggedOut}
+        />
+      </div>
+    </li>
+  );
+}
+
+function RunDetailPage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () => void }) {
   const { id } = useParams();
   const [detail, setDetail] = useState<RunDetailResponse | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
@@ -768,16 +863,30 @@ function RunDetailPage({ onLoggedOut }: { onLoggedOut: () => void }) {
 
   const failedRoleSpec = detail?.run.status === RunStatus.FAILED_ROLE_SPEC;
 
+  // Context-preserving link so Profile can offer a return path to this run.
+  const runPath = id != null && id !== "" ? `/runs/${id}` : null;
+  const profileHref = runPath
+    ? `/profile?returnTo=${encodeURIComponent(runPath)}`
+    : "/profile";
+
   return (
     <main>
-      <h1>Run</h1>
-      <p>Run id: {id ?? "—"}</p>
+      <AppHeader user={user} onLoggedOut={onLoggedOut} />
+      <h1>Run detail</h1>
       {pollError != null && <p role="alert">{pollError}</p>}
       {detail != null && (
         <>
           <p>
-            Run status: {detail.run.status} · Companies: {detail.companies.length} · Matched jobs:{" "}
-            {detail.matched_jobs.length}
+            Searched role: <strong>{detail.run.role_raw}</strong>
+          </p>
+          <p className="muted">
+            {detail.run.include_adjacent
+              ? "Adjacent roles are included in matching."
+              : "Only the specified role is matched."}
+          </p>
+          <p>
+            Status: <strong>{runStatusPlainLanguage(detail.run.status)}</strong> · Companies:{" "}
+            {detail.companies.length} · Matched jobs: {detail.matched_jobs.length}
           </p>
 
           {detail.run.status === RunStatus.COMPLETED && id != null && id !== "" && (
@@ -842,9 +951,12 @@ function RunDetailPage({ onLoggedOut }: { onLoggedOut: () => void }) {
             </>
           ) : (
             <>
-              {isRunActive(detail.run.status) && pendingInProgress.length > 0 && (
-                <section aria-labelledby="run-active-companies-heading">
-                  <h2 id="run-active-companies-heading">In progress</h2>
+              <section aria-labelledby="run-active-companies-heading">
+                <h2 id="run-active-companies-heading">In progress</h2>
+                <p className="muted">Still scanning.</p>
+                {pendingInProgress.length === 0 ? (
+                  <p>No companies in this category yet.</p>
+                ) : (
                   <ul>
                     {pendingInProgress.map((c) => (
                       <li key={c.id}>
@@ -855,68 +967,88 @@ function RunDetailPage({ onLoggedOut }: { onLoggedOut: () => void }) {
                       </li>
                     ))}
                   </ul>
-                </section>
-              )}
+                )}
+              </section>
 
               <section aria-labelledby="matches-heading">
                 <h2 id="matches-heading">Matches</h2>
-                <ul>
-                  {matchesCompanies.map((c) => {
-                    const jobs = jobsByCompanyId.get(c.id) ?? [];
-                    return (
+                <p className="muted">
+                  Surveyor completed the company scan and found one or more jobs matching this run’s
+                  role criteria.
+                </p>
+                {matchesCompanies.length === 0 ? (
+                  <p>No companies in this category yet.</p>
+                ) : (
+                  <ul>
+                    {matchesCompanies.map((c) => {
+                      const jobs = jobsByCompanyId.get(c.id) ?? [];
+                      return (
+                        <li key={c.id}>
+                          <div>
+                            {c.input_index}: {c.company_name} — {c.status}
+                          </div>
+                          <CompanyEvidence company={c} />
+                          {jobs.length > 0 && (
+                            <ul>
+                              {jobs.map((j) => (
+                                <MatchedJob
+                                  key={j.id}
+                                  job={j}
+                                  onLoggedOut={onLoggedOut}
+                                  profileHref={profileHref}
+                                />
+                              ))}
+                            </ul>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </section>
+
+              <section aria-labelledby="no-match-heading">
+                <h2 id="no-match-heading">No match</h2>
+                <p className="muted">
+                  Surveyor completed the scan confidently but found no jobs matching this run’s role
+                  criteria.
+                </p>
+                {noMatchCompanies.length === 0 ? (
+                  <p>No companies in this category yet.</p>
+                ) : (
+                  <ul>
+                    {noMatchCompanies.map((c) => (
                       <li key={c.id}>
                         <div>
                           {c.input_index}: {c.company_name} — {c.status}
                         </div>
                         <CompanyEvidence company={c} />
-                        {jobs.length > 0 && (
-                          <ul>
-                            {jobs.map((j) => (
-                              <li key={j.id}>
-                                <a href={j.url} target="_blank" rel="noreferrer">
-                                  {j.title}
-                                </a>
-                                {j.location != null && j.location !== "" && ` · ${j.location}`}
-                                {j.match_reason && ` · ${j.match_reason}`}
-                                <JobFitAnalysis jobRowId={j.id} onLoggedOut={onLoggedOut} />
-                                <ApplicationPacket jobRowId={j.id} onLoggedOut={onLoggedOut} />
-                                <ApplicationTracking jobRowId={j.id} onLoggedOut={onLoggedOut} />
-                              </li>
-                            ))}
-                          </ul>
-                        )}
                       </li>
-                    );
-                  })}
-                </ul>
-              </section>
-
-              <section aria-labelledby="no-match-heading">
-                <h2 id="no-match-heading">No match</h2>
-                <ul>
-                  {noMatchCompanies.map((c) => (
-                    <li key={c.id}>
-                      <div>
-                        {c.input_index}: {c.company_name} — {c.status}
-                      </div>
-                      <CompanyEvidence company={c} />
-                    </li>
-                  ))}
-                </ul>
+                    ))}
+                  </ul>
+                )}
               </section>
 
               <section aria-labelledby="unverified-heading">
                 <h2 id="unverified-heading">Unverified</h2>
-                <ul>
-                  {unverifiedCompanies.map((c) => (
-                    <li key={c.id}>
-                      <div>
-                        {c.input_index}: {c.company_name} — {c.status}
-                      </div>
-                      <CompanyEvidence company={c} />
-                    </li>
-                  ))}
-                </ul>
+                <p className="muted">
+                  Surveyor could not complete a confident scan for this company. This is not the same
+                  as finding no match.
+                </p>
+                {unverifiedCompanies.length === 0 ? (
+                  <p>No companies in this category yet.</p>
+                ) : (
+                  <ul>
+                    {unverifiedCompanies.map((c) => (
+                      <li key={c.id}>
+                        <div>
+                          {c.input_index}: {c.company_name} — {c.status}
+                        </div>
+                        <CompanyEvidence company={c} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </section>
             </>
           )}
@@ -971,10 +1103,22 @@ export default function App() {
         path="/"
         element={<HomePage user={authState.user} onLoggedOut={handleLoggedOut} />}
       />
-      <Route path="/runs/:id" element={<RunDetailPage onLoggedOut={handleLoggedOut} />} />
-      <Route path="/profile" element={<ProfilePage onLoggedOut={handleLoggedOut} />} />
-      <Route path="/saved" element={<SavedPage onLoggedOut={handleLoggedOut} />} />
-      <Route path="/applications" element={<ApplicationsPage onLoggedOut={handleLoggedOut} />} />
+      <Route
+        path="/runs/:id"
+        element={<RunDetailPage user={authState.user} onLoggedOut={handleLoggedOut} />}
+      />
+      <Route
+        path="/profile"
+        element={<ProfilePage user={authState.user} onLoggedOut={handleLoggedOut} />}
+      />
+      <Route
+        path="/saved"
+        element={<SavedPage user={authState.user} onLoggedOut={handleLoggedOut} />}
+      />
+      <Route
+        path="/applications"
+        element={<ApplicationsPage user={authState.user} onLoggedOut={handleLoggedOut} />}
+      />
     </Routes>
   );
 }

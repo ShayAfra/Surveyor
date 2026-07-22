@@ -2,8 +2,10 @@ import type { ApplicationListResponse, ApplicationResponse } from "@surveyor/sha
 import { ApplicationTrackingStatus } from "@surveyor/shared";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import AppHeader, { type AuthUser } from "./AppHeader.js";
 
 interface ApplicationsPageProps {
+  user: AuthUser;
   onLoggedOut: () => void;
 }
 
@@ -13,6 +15,20 @@ type LoadState =
   | { status: "error"; message: string };
 
 const STATUS_OPTIONS = Object.values(ApplicationTrackingStatus);
+
+/** Human-readable labels for stored tracking statuses. Display only — stored enum values are unchanged. */
+const STATUS_LABELS: Record<string, string> = {
+  [ApplicationTrackingStatus.SAVED]: "Saved",
+  [ApplicationTrackingStatus.APPLIED]: "Applied",
+  [ApplicationTrackingStatus.INTERVIEWING]: "Interviewing",
+  [ApplicationTrackingStatus.OFFER]: "Offer",
+  [ApplicationTrackingStatus.REJECTED]: "Rejected",
+  [ApplicationTrackingStatus.WITHDRAWN]: "Withdrawn",
+};
+
+function statusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? status;
+}
 
 function toDatetimeLocalValue(epochMs: number | null): string {
   if (epochMs == null) {
@@ -146,7 +162,7 @@ function ApplicationRow({
           <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)}>
             {STATUS_OPTIONS.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {statusLabel(s)}
               </option>
             ))}
           </select>
@@ -199,7 +215,7 @@ function ApplicationRow({
   );
 }
 
-export default function ApplicationsPage({ onLoggedOut }: ApplicationsPageProps) {
+export default function ApplicationsPage({ user, onLoggedOut }: ApplicationsPageProps) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [statusFilter, setStatusFilter] = useState<string>("");
 
@@ -230,13 +246,15 @@ export default function ApplicationsPage({ onLoggedOut }: ApplicationsPageProps)
 
   return (
     <main>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h1>Applications</h1>
-        <Link to="/">Back to home</Link>
-      </div>
+      <AppHeader user={user} onLoggedOut={onLoggedOut} />
+      <h1>Applications</h1>
       <p>
         A record of what you did with verified opportunities. You decide what happened — nothing
         here submits applications or contacts anyone on your behalf.
+      </p>
+      <p className="muted">
+        “Saved” means you have recorded an opportunity but not yet marked further progress. Update
+        the status as things move to applied, interviewing, offer, rejected, or withdrawn.
       </p>
 
       <section aria-labelledby="applications-filter-heading">
@@ -247,7 +265,7 @@ export default function ApplicationsPage({ onLoggedOut }: ApplicationsPageProps)
             <option value="">All</option>
             {STATUS_OPTIONS.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {statusLabel(s)}
               </option>
             ))}
           </select>
@@ -261,7 +279,10 @@ export default function ApplicationsPage({ onLoggedOut }: ApplicationsPageProps)
         <section aria-labelledby="applications-list-heading">
           <h2 id="applications-list-heading">Tracked applications ({state.applications.length})</h2>
           {state.applications.length === 0 ? (
-            <p>No applications tracked yet.</p>
+            <p>
+              No applications are tracked yet. Start a scan, open a verified match, and choose Track
+              application.
+            </p>
           ) : (
             <ul style={{ listStyle: "none", padding: 0 }}>
               {state.applications.map((application) => (

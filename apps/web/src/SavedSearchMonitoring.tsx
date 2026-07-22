@@ -3,6 +3,7 @@ import type {
   MonitoringExecutionListResponse,
   MonitoringExecutionResponse,
   MonitoringMatchListResponse,
+  MonitoringRunNowResponse,
 } from "@surveyor/shared";
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -43,6 +44,7 @@ export default function SavedSearchMonitoring({
   const [toggling, setToggling] = useState(false);
   const [runningNow, setRunningNow] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [lastRunNowRunId, setLastRunNowRunId] = useState<string | null>(null);
 
   async function load(): Promise<void> {
     setState({ status: "loading" });
@@ -125,6 +127,8 @@ export default function SavedSearchMonitoring({
         setActionError("Failed to start monitoring run");
         return;
       }
+      const data = (await res.json()) as MonitoringRunNowResponse;
+      setLastRunNowRunId(data.runId);
       await load();
     } catch {
       setActionError("Network error");
@@ -149,6 +153,11 @@ export default function SavedSearchMonitoring({
 
           {state.status === "loaded" && (
             <>
+              <p className="muted">
+                Enable monitoring to periodically start ordinary Surveyor scans for this saved
+                search. Run now starts one immediately. Either way, monitoring creates the same kind
+                of scanner run you would start by hand — nothing is submitted or sent anywhere.
+              </p>
               <div>
                 <label>
                   <input
@@ -175,6 +184,11 @@ export default function SavedSearchMonitoring({
                   {runningNow ? "Starting…" : "Run now"}
                 </button>
               </div>
+              {lastRunNowRunId != null && (
+                <p>
+                  Monitoring run started — <Link to={`/runs/${lastRunNowRunId}`}>View run</Link>
+                </p>
+              )}
               {actionError != null && <p role="alert">{actionError}</p>}
 
               <h4>Execution history</h4>
@@ -204,6 +218,9 @@ export default function SavedSearchMonitoring({
                       First seen: {new Date(match.first_seen_at).toLocaleString()} · Last seen:{" "}
                       {new Date(match.last_seen_at).toLocaleString()} · Seen {match.seen_count}{" "}
                       time{match.seen_count === 1 ? "" : "s"}
+                    </div>
+                    <div>
+                      <Link to={`/runs/${match.last_seen_run_id}`}>View latest Surveyor run</Link>
                     </div>
                   </li>
                 ))}

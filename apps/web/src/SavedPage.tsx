@@ -5,10 +5,12 @@ import type {
   SavedSearchResponse,
 } from "@surveyor/shared";
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import SavedSearchMonitoring from "./SavedSearchMonitoring.js";
+import AppHeader, { type AuthUser } from "./AppHeader.js";
 
 interface SavedPageProps {
+  user: AuthUser;
   onLoggedOut: () => void;
 }
 
@@ -41,7 +43,7 @@ function searchFormFromResponse(search: SavedSearchResponse) {
   };
 }
 
-export default function SavedPage({ onLoggedOut }: SavedPageProps) {
+export default function SavedPage({ user, onLoggedOut }: SavedPageProps) {
   const navigate = useNavigate();
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
@@ -314,10 +316,12 @@ export default function SavedPage({ onLoggedOut }: SavedPageProps) {
 
   return (
     <main>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h1>Saved</h1>
-        <Link to="/">Back to Run</Link>
-      </div>
+      <AppHeader user={user} onLoggedOut={onLoggedOut} />
+      <h1>Saved</h1>
+      <p className="muted">
+        Saved companies are your reference list. Saved searches combine a role and company list so
+        you can rerun or monitor the same search.
+      </p>
 
       {state.status === "loading" && <p>Loading…</p>}
       {state.status === "error" && <p role="alert">{state.message}</p>}
@@ -326,7 +330,13 @@ export default function SavedPage({ onLoggedOut }: SavedPageProps) {
         <>
           <section aria-labelledby="saved-companies-heading">
             <h2 id="saved-companies-heading">Saved companies</h2>
-            {state.companies.length === 0 && <p>No saved companies yet.</p>}
+            <p className="muted">
+              Reference data only — a shortlist of companies you care about. Saving a company does
+              not start a scan.
+            </p>
+            {state.companies.length === 0 && (
+              <p>No saved companies yet. Add one below to build your reference list.</p>
+            )}
             <ul>
               {state.companies.map((company) => (
                 <li key={company.id}>
@@ -394,7 +404,13 @@ export default function SavedPage({ onLoggedOut }: SavedPageProps) {
 
           <section aria-labelledby="saved-searches-heading">
             <h2 id="saved-searches-heading">Saved searches</h2>
-            {state.searches.length === 0 && <p>No saved searches yet.</p>}
+            <p className="muted">
+              A runnable scanner input: a role plus a company list. Start a run to scan it now, or
+              enable monitoring to have Surveyor rerun ordinary scans periodically.
+            </p>
+            {state.searches.length === 0 && (
+              <p>No saved searches yet. Add a role and companies below to create a runnable search.</p>
+            )}
             {runError != null && <p role="alert">{runError}</p>}
             <ul>
               {state.searches.map((search) => (

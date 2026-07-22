@@ -2,3 +2,44 @@ body {
   margin: 0;
   font-family: system-ui, sans-serif;
 }
+
+/* Shared authenticated header */
+.app-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid #ddd;
+}
+
+.app-header__brand {
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.app-header__nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.app-header__account {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Explanatory copy shown alongside primary content */
+.muted {
+  color: #555;
+}
+
+.info-box {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.5rem;
+}
