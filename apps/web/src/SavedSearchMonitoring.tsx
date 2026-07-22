@@ -154,9 +154,10 @@ export default function SavedSearchMonitoring({
           {state.status === "loaded" && (
             <>
               <p className="muted">
-                Enable monitoring to periodically start ordinary Surveyor scans for this saved
-                search. Run now starts one immediately. Either way, monitoring creates the same kind
-                of scanner run you would start by hand — nothing is submitted or sent anywhere.
+                Monitoring reruns this saved search on a schedule to catch new matches. “Run
+                monitoring check now” runs that check immediately. It is the same kind of ordinary
+                scanner run as “Scan once” above — the difference is that monitoring also records
+                which matches are new. Nothing is submitted or sent anywhere.
               </p>
               <div>
                 <label>
@@ -181,7 +182,7 @@ export default function SavedSearchMonitoring({
                   onClick={handleRunNow}
                   disabled={runningNow || hasActiveExecution}
                 >
-                  {runningNow ? "Starting…" : "Run now"}
+                  {runningNow ? "Starting…" : "Run monitoring check now"}
                 </button>
               </div>
               {lastRunNowRunId != null && (
@@ -204,6 +205,11 @@ export default function SavedSearchMonitoring({
               </ul>
 
               <h4>Known matches</h4>
+              <p className="muted">
+                Each match links to the latest Surveyor run that recorded it, where you can review
+                the recorded job evidence and use the fit, packet, and tracking actions to prepare to
+                apply.
+              </p>
               {state.matches.length === 0 && <p>No known matches yet.</p>}
               <ul>
                 {state.matches.map((match) => (
@@ -220,7 +226,9 @@ export default function SavedSearchMonitoring({
                       time{match.seen_count === 1 ? "" : "s"}
                     </div>
                     <div>
-                      <Link to={`/runs/${match.last_seen_run_id}`}>View latest Surveyor run</Link>
+                      <Link to={`/runs/${match.last_seen_run_id}`}>
+                        Open latest evidence and prepare to apply
+                      </Link>
                     </div>
                   </li>
                 ))}

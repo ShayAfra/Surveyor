@@ -1,9 +1,13 @@
 import type {
+  ApplicationListResponse,
   ApplicationPacketResponse,
   FitAnalysisResponse,
+  JobDetailResponse,
   JobRowResponse,
   RunCompanyResponse,
   RunDetailResponse,
+  RunListResponse,
+  SavedSearchListResponse,
 } from "@surveyor/shared";
 import { CompanyStatus, RunStatus } from "@surveyor/shared";
 import type { ReactNode } from "react";
@@ -131,6 +135,78 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (user: AuthUser) => v
   );
 }
 
+const RECENT_SCANS_DEFAULT_LIMIT = 5;
+
+/**
+ * Returning-user "resume your work" surface for the home page. Lists recent
+ * owned scans (newest first, five by default with an in-place show-all toggle)
+ * and compact links into saved searches/monitoring and applications. Read-only:
+ * it renders the owned run list and existing summaries; it starts no scans and
+ * changes no scanner state.
+ */
+function ResumeYourWork({
+  runs,
+  showAll,
+  onToggleShowAll,
+  savedSearchCount,
+  applicationCount,
+}: {
+  runs: RunListResponse;
+  showAll: boolean;
+  onToggleShowAll: () => void;
+  savedSearchCount: number | null;
+  applicationCount: number | null;
+}) {
+  const visibleRuns = showAll ? runs : runs.slice(0, RECENT_SCANS_DEFAULT_LIMIT);
+  const hasMore = runs.length > RECENT_SCANS_DEFAULT_LIMIT;
+
+  return (
+    <section aria-labelledby="resume-work-heading" className="info-box">
+      <h2 id="resume-work-heading">Resume your work</h2>
+      <p className="muted">
+        Pick up a previous scan, or jump to your saved searches and tracked applications.
+      </p>
+
+      <h3>Recent scans</h3>
+      <ul className="recent-scans">
+        {visibleRuns.map((run) => (
+          <li key={run.id} className="recent-scan">
+            <Link to={`/runs/${run.id}`}>{run.role_raw}</Link>
+            {run.include_adjacent && <span className="muted"> (includes adjacent roles)</span>}
+            <div className="muted">
+              {new Date(run.created_at).toLocaleString()} · {runStatusPlainLanguage(run.status)}
+            </div>
+            <div className="muted">
+              {run.company_count} compan{run.company_count === 1 ? "y" : "ies"} · {run.matched_company_count}{" "}
+              matched · {run.no_match_company_count} no match · {run.unverified_company_count}{" "}
+              unverified
+            </div>
+          </li>
+        ))}
+      </ul>
+      {hasMore && (
+        <button type="button" onClick={onToggleShowAll}>
+          {showAll
+            ? `Show fewer scans`
+            : `Show all previous scans (${runs.length})`}
+        </button>
+      )}
+
+      <p className="muted" style={{ marginTop: "1rem" }}>
+        <Link to="/saved">Saved searches &amp; monitoring</Link>
+        {savedSearchCount != null && (
+          <> — {savedSearchCount} saved search{savedSearchCount === 1 ? "" : "es"}</>
+        )}
+        {" · "}
+        <Link to="/applications">Applications</Link>
+        {applicationCount != null && (
+          <> — {applicationCount} tracked</>
+        )}
+      </p>
+    </section>
+  );
+}
+
 function HomePage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () => void }) {
   const navigate = useNavigate();
   const [health, setHealth] = useState<HealthState>({ status: "loading" });
@@ -139,6 +215,64 @@ function HomePage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () => vo
   const [includeAdjacent, setIncludeAdjacent] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Returning-user "resume your work" data. recentRuns stays null until the
+  // owned run list loads so first-time onboarding is not shown prematurely.
+  const [recentRuns, setRecentRuns] = useState<RunListResponse | null>(null);
+  const [showAllScans, setShowAllScans] = useState(false);
+  const [savedSearchCount, setSavedSearchCount] = useState<number | null>(null);
+  const [applicationCount, setApplicationCount] = useState<number | null>(null);
+
+  // Load the owned run list plus compact saved-search / application summaries.
+  // These are additive resume-work surfaces built on existing read endpoints;
+  // failures degrade quietly rather than blocking the scan form.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadResumeWork() {
+      try {
+        const res = await fetch("/api/runs");
+        if (res.status === 401) {
+          if (!cancelled) onLoggedOut();
+          return;
+        }
+        if (res.ok && !cancelled) {
+          setRecentRuns((await res.json()) as RunListResponse);
+        }
+      } catch {
+        /* leave recentRuns null; the scan form still works */
+      }
+    }
+
+    async function loadSavedSearchCount() {
+      try {
+        const res = await fetch("/api/saved-searches");
+        if (res.ok && !cancelled) {
+          setSavedSearchCount(((await res.json()) as SavedSearchListResponse).length);
+        }
+      } catch {
+        /* summary link is optional */
+      }
+    }
+
+    async function loadApplicationCount() {
+      try {
+        const res = await fetch("/api/applications");
+        if (res.ok && !cancelled) {
+          setApplicationCount(((await res.json()) as ApplicationListResponse).length);
+        }
+      } catch {
+        /* summary link is optional */
+      }
+    }
+
+    void loadResumeWork();
+    void loadSavedSearchCount();
+    void loadApplicationCount();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [onLoggedOut]);
 
   useEffect(() => {
     let cancelled = false;
@@ -241,24 +375,36 @@ function HomePage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () => vo
         </p>
       )}
 
-      <section aria-labelledby="how-it-works-heading" className="info-box">
-        <h2 id="how-it-works-heading">How Surveyor works</h2>
-        <p>
-          Enter one role and 1–10 target companies. Surveyor checks official careers sources and
-          reports matches, completed scans with no matching role, or results it could not
-          confidently verify.
-        </p>
-        <ol>
-          <li>Add profile and resume context.</li>
-          <li>Start a scan for one role across up to 10 companies.</li>
-          <li>Review matches, no matches, and unverified results.</li>
-          <li>Analyze fit and generate an application packet.</li>
-          <li>Save searches, monitor new matches, and track applications.</li>
-        </ol>
-      </section>
+      {recentRuns !== null && recentRuns.length > 0 && (
+        <ResumeYourWork
+          runs={recentRuns}
+          showAll={showAllScans}
+          onToggleShowAll={() => setShowAllScans((v) => !v)}
+          savedSearchCount={savedSearchCount}
+          applicationCount={applicationCount}
+        />
+      )}
+
+      {recentRuns !== null && recentRuns.length === 0 && (
+        <section aria-labelledby="how-it-works-heading" className="info-box">
+          <h2 id="how-it-works-heading">How Surveyor works</h2>
+          <p>
+            Enter one role and 1–10 target companies. Surveyor checks official careers sources and
+            reports matches, completed scans with no matching role, or results it could not
+            confidently verify.
+          </p>
+          <ol>
+            <li>Add profile and resume context.</li>
+            <li>Start a scan for one role across up to 10 companies.</li>
+            <li>Review matches, no matches, and unverified results.</li>
+            <li>Analyze fit and generate an application packet.</li>
+            <li>Save searches, monitor new matches, and track applications.</li>
+          </ol>
+        </section>
+      )}
 
       <section aria-labelledby="run-form-heading">
-        <h2 id="run-form-heading">Start a scan</h2>
+        <h2 id="run-form-heading">Start a new scan</h2>
         <form onSubmit={handleSubmit}>
           <div>
             <label htmlFor="run-role">Role</label>
@@ -468,7 +614,7 @@ function JobFitAnalysis({
         type="button"
         onClick={() => setExpanded((v) => !v)}
       >
-        {expanded ? "Hide fit analysis" : "Analyze fit"}
+        {expanded ? "Hide fit analysis" : "Fit analysis"}
       </button>
       {expanded && (
         <div style={{ marginLeft: "1rem", marginTop: "0.5rem" }}>
@@ -634,7 +780,7 @@ function ApplicationPacket({
   return (
     <div>
       <button type="button" onClick={() => setExpanded((v) => !v)}>
-        {expanded ? "Hide application packet" : "Generate application packet"}
+        {expanded ? "Hide application packet" : "Application packet"}
       </button>
       {expanded && (
         <div style={{ marginLeft: "1rem", marginTop: "0.5rem" }}>
@@ -717,9 +863,117 @@ function ApplicationPacket({
 }
 
 /**
- * One matched job with its fit / packet / tracking tools in a clear order.
- * Holds the newest completed packet id so a single tracking control can link
- * it — there is exactly one tracking control per matched job.
+ * Lazily loads and shows the stored job description for a matched job. Only
+ * rendered when the run detail already reports that a stored description
+ * exists. Uses the existing GET /api/jobs/:jobRowId/detail endpoint on expand;
+ * it never refetches the job page, summarizes, or changes scanner evidence.
+ */
+function StoredJobDescription({
+  jobRowId,
+  onLoggedOut,
+}: {
+  jobRowId: string;
+  onLoggedOut: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [detail, setDetail] = useState<JobDetailResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobRowId)}/detail`);
+      if (res.status === 401) {
+        onLoggedOut();
+        return;
+      }
+      if (!res.ok) {
+        setError(`Request failed (${res.status})`);
+        return;
+      }
+      setDetail((await res.json()) as JobDetailResponse);
+    } catch {
+      setError("Network error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (expanded && detail === null && !loading && error === null) {
+      void load();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded]);
+
+  return (
+    <div>
+      <button type="button" onClick={() => setExpanded((v) => !v)}>
+        {expanded ? "Hide stored job description" : "View stored job description"}
+      </button>
+      {expanded && (
+        <div style={{ marginLeft: "1rem", marginTop: "0.5rem" }}>
+          {loading && <p>Loading…</p>}
+          {error != null && <p role="alert">{error}</p>}
+          {detail != null && (
+            <>
+              {detail.fetched_at != null && (
+                <p className="muted">Recorded {new Date(detail.fetched_at).toLocaleString()}.</p>
+              )}
+              {detail.description_text != null && detail.description_text !== "" ? (
+                <p style={{ whiteSpace: "pre-wrap" }}>{detail.description_text}</p>
+              ) : (
+                <p className="muted">No stored description text.</p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Plain-language job-detail evidence state for a matched job, derived only from
+ * RunDetailResponse fields already fetched for the run. Shows one of three
+ * states, offers the stored-description viewer when a description exists, and
+ * surfaces the stored failure reason when the detail fetch failed. Reads
+ * scanner evidence only — it never changes company status or refetches pages.
+ */
+function JobEvidence({ job, onLoggedOut }: { job: JobRowResponse; onLoggedOut: () => void }) {
+  const hasFailure =
+    job.job_detail_failure_code != null || job.job_detail_failure_reason != null;
+
+  return (
+    <div className="job-evidence">
+      <p className="muted">
+        <strong>Job evidence:</strong>{" "}
+        {job.job_detail_available
+          ? "Full job description recorded."
+          : hasFailure
+            ? "Full description unavailable; preparation uses the title, location, and match reason."
+            : "Detail status not yet available."}
+      </p>
+      {job.job_detail_available && (
+        <StoredJobDescription jobRowId={job.id} onLoggedOut={onLoggedOut} />
+      )}
+      {!job.job_detail_available && hasFailure && (
+        <p className="muted">
+          Reason: {job.job_detail_failure_reason ?? job.job_detail_failure_code}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One matched job, grouped into three parts: the job link and scanner match
+ * reason, the recorded Job evidence, and a Prepare to apply workflow (fit,
+ * packet, tracking) in order. Holds the newest completed packet id so the
+ * single tracking control can link it — there is exactly one tracking control
+ * per matched job.
  */
 function MatchedJob({
   job,
@@ -734,38 +988,38 @@ function MatchedJob({
 
   return (
     <li>
-      <a href={job.url} target="_blank" rel="noreferrer">
-        {job.title}
-      </a>
-      {job.location != null && job.location !== "" && ` · ${job.location}`}
-      {job.match_reason && ` · ${job.match_reason}`}
-      {job.job_detail_available ? (
-        <p className="muted">Full job detail recorded.</p>
-      ) : job.job_detail_failure_code != null || job.job_detail_failure_reason != null ? (
-        <p className="muted">
-          Job detail fetch failed, but the matched job is still recorded as scanner evidence.
-        </p>
-      ) : null}
-      <p className="muted">
-        For each match: understand the verified match, analyze fit, prepare a packet, then track the
-        application.
-      </p>
-      <JobFitAnalysis jobRowId={job.id} onLoggedOut={onLoggedOut} profileHref={profileHref} />
-      <ApplicationPacket
-        jobRowId={job.id}
-        onLoggedOut={onLoggedOut}
-        profileHref={profileHref}
-        onLatestCompletedPacket={setLatestCompletedPacketId}
-      />
       <div>
+        <a href={job.url} target="_blank" rel="noreferrer">
+          {job.title}
+        </a>
+        {job.location != null && job.location !== "" && ` · ${job.location}`}
+        {job.match_reason && ` · ${job.match_reason}`}
+      </div>
+
+      <JobEvidence job={job} onLoggedOut={onLoggedOut} />
+
+      <div className="prepare-to-apply">
         <p className="muted">
-          Tracking records your own next steps. Surveyor does not submit applications.
+          <strong>Prepare to apply:</strong> analyze fit, generate an application packet, then track
+          your application. Surveyor never submits anything.
         </p>
-        <ApplicationTracking
+        <JobFitAnalysis jobRowId={job.id} onLoggedOut={onLoggedOut} profileHref={profileHref} />
+        <ApplicationPacket
           jobRowId={job.id}
-          applicationPacketId={latestCompletedPacketId ?? undefined}
           onLoggedOut={onLoggedOut}
+          profileHref={profileHref}
+          onLatestCompletedPacket={setLatestCompletedPacketId}
         />
+        <div>
+          <p className="muted">
+            Tracking records your own next steps. Surveyor does not submit applications.
+          </p>
+          <ApplicationTracking
+            jobRowId={job.id}
+            applicationPacketId={latestCompletedPacketId ?? undefined}
+            onLoggedOut={onLoggedOut}
+          />
+        </div>
       </div>
     </li>
   );
@@ -863,6 +1117,13 @@ function RunDetailPage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () 
 
   const failedRoleSpec = detail?.run.status === RunStatus.FAILED_ROLE_SPEC;
 
+  // Once the run has completed, every company is finalized, so an empty
+  // In progress section is just noise — hide it. While the run is still
+  // CREATED/READY/RUNNING, keep showing it (a transiently empty list still
+  // means "still scanning").
+  const hideEmptyInProgress =
+    detail?.run.status === RunStatus.COMPLETED && pendingInProgress.length === 0;
+
   // Context-preserving link so Profile can offer a return path to this run.
   const runPath = id != null && id !== "" ? `/runs/${id}` : null;
   const profileHref = runPath
@@ -872,6 +1133,9 @@ function RunDetailPage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () 
   return (
     <main>
       <AppHeader user={user} onLoggedOut={onLoggedOut} />
+      <p>
+        <Link to="/">← Back to scans</Link>
+      </p>
       <h1>Run detail</h1>
       {pollError != null && <p role="alert">{pollError}</p>}
       {detail != null && (
@@ -951,24 +1215,26 @@ function RunDetailPage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () 
             </>
           ) : (
             <>
-              <section aria-labelledby="run-active-companies-heading">
-                <h2 id="run-active-companies-heading">In progress</h2>
-                <p className="muted">Still scanning.</p>
-                {pendingInProgress.length === 0 ? (
-                  <p>No companies in this category yet.</p>
-                ) : (
-                  <ul>
-                    {pendingInProgress.map((c) => (
-                      <li key={c.id}>
-                        <div>
-                          {c.input_index}: {c.company_name} — {c.status}
-                        </div>
-                        <CompanyEvidence company={c} />
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
+              {!hideEmptyInProgress && (
+                <section aria-labelledby="run-active-companies-heading">
+                  <h2 id="run-active-companies-heading">In progress</h2>
+                  <p className="muted">Still scanning.</p>
+                  {pendingInProgress.length === 0 ? (
+                    <p>No companies in this category yet.</p>
+                  ) : (
+                    <ul>
+                      {pendingInProgress.map((c) => (
+                        <li key={c.id}>
+                          <div>
+                            {c.input_index}: {c.company_name} — {c.status}
+                          </div>
+                          <CompanyEvidence company={c} />
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              )}
 
               <section aria-labelledby="matches-heading">
                 <h2 id="matches-heading">Matches</h2>

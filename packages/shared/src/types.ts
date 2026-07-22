@@ -59,6 +59,27 @@ export interface RunDetailResponse {
   matched_jobs: JobRowResponse[];
 }
 
+/**
+ * One row in the owned run list (GET /api/runs). Minimal on purpose: enough to
+ * let a returning user recognize and reopen a previous scan, plus per-run
+ * company outcome counts. Counts are derived from run_companies statuses and do
+ * not change scanner status meanings. CANCELLED is intentionally not folded
+ * into unverified_company_count.
+ */
+export interface RunListItemResponse {
+  id: string;
+  status: RunStatus;
+  role_raw: string;
+  include_adjacent: boolean;
+  created_at: number;
+  company_count: number;
+  matched_company_count: number;
+  no_match_company_count: number;
+  unverified_company_count: number;
+}
+
+export type RunListResponse = RunListItemResponse[];
+
 export interface JobDetailResponse {
   job_row_id: string;
   job_url: string;

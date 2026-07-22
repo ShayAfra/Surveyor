@@ -33,6 +33,8 @@ export type {
   RoleSpecSeniority,
   RunCompanyResponse,
   RunDetailResponse,
+  RunListItemResponse,
+  RunListResponse,
   RunResponse,
   SavedCompanyListResponse,
   SavedCompanyResponse,

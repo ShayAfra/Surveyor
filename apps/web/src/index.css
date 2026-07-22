@@ -25,6 +25,19 @@ body {
   gap: 1rem;
 }
 
+.app-header__nav-link {
+  text-decoration: none;
+  color: #333;
+  padding-bottom: 2px;
+  border-bottom: 2px solid transparent;
+}
+
+.app-header__nav-link.is-active {
+  font-weight: 600;
+  color: #111;
+  border-bottom-color: #111;
+}
+
 .app-header__account {
   margin-left: auto;
   display: flex;
@@ -42,4 +55,30 @@ body {
   border-radius: 6px;
   padding: 0.75rem 1rem;
   margin-bottom: 1.5rem;
+}
+
+.recent-scans {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+}
+
+.recent-scan {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #eee;
+}
+
+.recent-scan:last-child {
+  border-bottom: none;
+}
+
+/* Groups the fit / packet / tracking workflow under one matched job. */
+.prepare-to-apply {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0 0;
+  border-top: 1px solid #eee;
+}
+
+.job-evidence {
+  margin: 0.25rem 0;
 }

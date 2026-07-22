@@ -1,6 +1,13 @@
 import { Router } from "express";
-import type { RunCompanyResponse, RunDetailResponse, RunResponse } from "@surveyor/shared";
+import type {
+  RunCompanyResponse,
+  RunDetailResponse,
+  RunListItemResponse,
+  RunListResponse,
+  RunResponse,
+} from "@surveyor/shared";
 import type { RunStatus } from "@surveyor/shared";
+import { CompanyStatus } from "@surveyor/shared";
 import { db } from "../db/db.js";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth.js";
 import { CreateRunRequestError, createRunForUser } from "../lib/runs.js";
@@ -24,6 +31,73 @@ runsRouter.post("/api/runs", requireAuth, (req: AuthenticatedRequest, res) => {
     }
     return res.status(500).json({ error: "failed to create run" });
   }
+});
+
+/**
+ * Owned run list for the returning-user "resume your work" surface. Read-only:
+ * returns only the current user's runs (never accepts user_id from the client),
+ * newest first with id as a deterministic tie-breaker. Company outcome counts
+ * come from conditional aggregation over run_companies and preserve scanner
+ * status meanings exactly — MATCHES_FOUND, NO_MATCH_SCAN_COMPLETED, and
+ * UNVERIFIED each map to their own count; CANCELLED is deliberately not counted
+ * as unverified. Ownerless (user_id IS NULL) legacy runs are excluded because
+ * user_id = ? never matches NULL; the only convention that gives a user legacy
+ * runs is the first-signup backfill in createUser(), which assigns real
+ * ownership, so those already appear as owned runs here.
+ */
+runsRouter.get("/api/runs", requireAuth, (req: AuthenticatedRequest, res) => {
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        runs.id AS id,
+        runs.status AS status,
+        runs.role_raw AS role_raw,
+        runs.include_adjacent AS include_adjacent,
+        runs.created_at AS created_at,
+        COUNT(run_companies.id) AS company_count,
+        SUM(CASE WHEN run_companies.status = ? THEN 1 ELSE 0 END) AS matched_company_count,
+        SUM(CASE WHEN run_companies.status = ? THEN 1 ELSE 0 END) AS no_match_company_count,
+        SUM(CASE WHEN run_companies.status = ? THEN 1 ELSE 0 END) AS unverified_company_count
+      FROM runs
+      LEFT JOIN run_companies ON run_companies.run_id = runs.id
+      WHERE runs.user_id = ?
+      GROUP BY runs.id
+      ORDER BY runs.created_at DESC, runs.id DESC
+      `
+    )
+    .all(
+      CompanyStatus.MATCHES_FOUND,
+      CompanyStatus.NO_MATCH_SCAN_COMPLETED,
+      CompanyStatus.UNVERIFIED,
+      req.userId
+    ) as {
+      id: string;
+      status: RunStatus;
+      role_raw: string;
+      include_adjacent: number;
+      created_at: number;
+      company_count: number;
+      matched_company_count: number;
+      no_match_company_count: number;
+      unverified_company_count: number;
+    }[];
+
+  const responseBody: RunListResponse = rows.map(
+    (row): RunListItemResponse => ({
+      id: row.id,
+      status: row.status,
+      role_raw: row.role_raw,
+      include_adjacent: row.include_adjacent === 1,
+      created_at: row.created_at,
+      company_count: Number(row.company_count) || 0,
+      matched_company_count: Number(row.matched_company_count) || 0,
+      no_match_company_count: Number(row.no_match_company_count) || 0,
+      unverified_company_count: Number(row.unverified_company_count) || 0,
+    })
+  );
+
+  return res.json(responseBody);
 });
 
 runsRouter.get("/api/runs/:runId", requireAuth, (req: AuthenticatedRequest, res) => {

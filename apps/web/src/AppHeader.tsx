@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 export interface AuthUser {
   id: string;
@@ -6,10 +6,26 @@ export interface AuthUser {
   created_at: number;
 }
 
+/** True when the current path belongs to the given nav area. */
+function isActiveArea(pathname: string, area: "scans" | "profile" | "saved" | "applications"): boolean {
+  switch (area) {
+    case "scans":
+      // The Scans area covers the home/start-a-scan page and every run detail.
+      return pathname === "/" || pathname.startsWith("/runs/");
+    case "profile":
+      return pathname.startsWith("/profile");
+    case "saved":
+      return pathname.startsWith("/saved");
+    case "applications":
+      return pathname.startsWith("/applications");
+  }
+}
+
 /**
  * Shared authenticated header used by every signed-in page. Gives consistent
- * access to the main areas (Scanner, Profile, Saved, Applications), shows the
- * current user, and offers log out — so no authenticated route is a dead end.
+ * access to the main areas (Scans, Profile, Saved & monitoring, Applications),
+ * highlights the active area, shows the current user, and offers log out — so
+ * no authenticated route is a dead end.
  */
 export default function AppHeader({
   user,
@@ -18,9 +34,15 @@ export default function AppHeader({
   user: AuthUser;
   onLoggedOut: () => void;
 }) {
+  const { pathname } = useLocation();
+
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
     onLoggedOut();
+  }
+
+  function navLinkClass(area: "scans" | "profile" | "saved" | "applications"): string {
+    return isActiveArea(pathname, area) ? "app-header__nav-link is-active" : "app-header__nav-link";
   }
 
   return (
@@ -29,10 +51,34 @@ export default function AppHeader({
         Surveyor
       </Link>
       <nav className="app-header__nav" aria-label="Primary">
-        <Link to="/">Scanner</Link>
-        <Link to="/profile">Profile</Link>
-        <Link to="/saved">Saved</Link>
-        <Link to="/applications">Applications</Link>
+        <Link
+          to="/"
+          className={navLinkClass("scans")}
+          aria-current={isActiveArea(pathname, "scans") ? "page" : undefined}
+        >
+          Scans
+        </Link>
+        <Link
+          to="/profile"
+          className={navLinkClass("profile")}
+          aria-current={isActiveArea(pathname, "profile") ? "page" : undefined}
+        >
+          Profile
+        </Link>
+        <Link
+          to="/saved"
+          className={navLinkClass("saved")}
+          aria-current={isActiveArea(pathname, "saved") ? "page" : undefined}
+        >
+          Saved &amp; monitoring
+        </Link>
+        <Link
+          to="/applications"
+          className={navLinkClass("applications")}
+          aria-current={isActiveArea(pathname, "applications") ? "page" : undefined}
+        >
+          Applications
+        </Link>
       </nav>
       <div className="app-header__account">
         <span>{user.email}</span>

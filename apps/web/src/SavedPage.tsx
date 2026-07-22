@@ -317,10 +317,10 @@ export default function SavedPage({ user, onLoggedOut }: SavedPageProps) {
   return (
     <main>
       <AppHeader user={user} onLoggedOut={onLoggedOut} />
-      <h1>Saved</h1>
+      <h1>Saved &amp; monitoring</h1>
       <p className="muted">
-        Saved companies are your reference list. Saved searches combine a role and company list so
-        you can rerun or monitor the same search.
+        Saved companies are a reference shortlist and never start a scan. Saved searches pair a role
+        with a company list so you can scan it once now or monitor it for new matches over time.
       </p>
 
       {state.status === "loading" && <p>Loading…</p>}
@@ -405,8 +405,9 @@ export default function SavedPage({ user, onLoggedOut }: SavedPageProps) {
           <section aria-labelledby="saved-searches-heading">
             <h2 id="saved-searches-heading">Saved searches</h2>
             <p className="muted">
-              A runnable scanner input: a role plus a company list. Start a run to scan it now, or
-              enable monitoring to have Surveyor rerun ordinary scans periodically.
+              A runnable scanner input: a role plus a company list. Scan once runs an ordinary
+              scanner scan now (the same as starting one by hand). Monitoring, below each search,
+              reruns that same ordinary scan periodically to surface new matches — it submits nothing.
             </p>
             {state.searches.length === 0 && (
               <p>No saved searches yet. Add a role and companies below to create a runnable search.</p>
@@ -425,7 +426,7 @@ export default function SavedPage({ user, onLoggedOut }: SavedPageProps) {
                       onClick={() => handleStartRun(search.id)}
                       disabled={startingRunId === search.id}
                     >
-                      {startingRunId === search.id ? "Starting…" : "Start run"}
+                      {startingRunId === search.id ? "Scanning…" : "Scan once"}
                     </button>{" "}
                     <button type="button" onClick={() => handleEditSearch(search)}>
                       Edit
