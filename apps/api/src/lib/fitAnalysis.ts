@@ -396,6 +396,8 @@ interface LlmOutcome {
   modelName: string | null;
   failureCode: FitAnalysisFailureCode | null;
   failureReason: string | null;
+  /** Upstream HTTP status when the LLM call returned a non-OK response. Diagnostics only. */
+  upstreamStatus?: number | null;
 }
 
 /** Single LLM boundary for fit analysis: one HTTP call, strict JSON validation, never throws. */
@@ -453,6 +455,7 @@ async function callFitAnalysisLlm(evidence: EvidenceBundle): Promise<LlmOutcome>
       modelName: model,
       failureCode: FitAnalysisFailureCode.LLM_FAILED,
       failureReason: "fit analysis LLM call failed",
+      upstreamStatus: res.status,
     };
   }
 
@@ -587,6 +590,16 @@ export async function generateFitAnalysis(
       createdAt
     );
   } else {
+    // Safe diagnostics only: ids/codes/model/upstream status — never evidence,
+    // prompt, or model output. The FAILED row is still durable evidence.
+    console.warn("fit analysis generation failed", {
+      analysisId: id,
+      jobRowId,
+      failureCode: outcome.failureCode,
+      model: outcome.modelName,
+      upstreamStatus: outcome.upstreamStatus ?? null,
+    });
+
     db.prepare(
       `INSERT INTO job_fit_analyses
         (id, user_id, job_row_id, status, fit_summary, strengths_json, gaps_json, risks_json, suggested_next_steps_json, evidence_snapshot_json, model_name, failure_code, failure_reason, created_at)

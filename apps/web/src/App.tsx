@@ -11,7 +11,7 @@ import type {
 } from "@surveyor/shared";
 import { CompanyStatus, RunStatus } from "@surveyor/shared";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import {
   exportCombinedCsv,
@@ -19,6 +19,8 @@ import {
   exportNoMatchCsv,
   exportUnverifiedCsv,
 } from "./csvExport.js";
+import { parseApiError } from "./apiErrors.js";
+import InlineError from "./InlineError.js";
 import ProfilePage from "./ProfilePage.js";
 import SavedPage from "./SavedPage.js";
 import ApplicationsPage from "./ApplicationsPage.js";
@@ -33,18 +35,10 @@ type HealthState =
 type AuthGateState =
   | { status: "loading" }
   | { status: "authenticated"; user: AuthUser }
-  | { status: "unauthenticated" };
-
-async function fetchCurrentUser(): Promise<AuthUser | null> {
-  const res = await fetch("/api/auth/me");
-  if (res.status === 401) {
-    return null;
-  }
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`);
-  }
-  return (await res.json()) as AuthUser;
-}
+  | { status: "unauthenticated" }
+  // A non-401 session-check failure (network/500/etc.) is deliberately distinct
+  // from "unauthenticated" so an unreachable API is never mistaken for a logout.
+  | { status: "error" };
 
 function LoginPage({ onAuthenticated }: { onAuthenticated: (user: AuthUser) => void }) {
   const [mode, setMode] = useState<"login" | "signup">("login");
@@ -65,17 +59,19 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (user: AuthUser) => v
         body: JSON.stringify({ email, password }),
       });
 
-      const data: unknown = await res.json().catch(() => null);
-      const body = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
-
       if (!res.ok) {
-        const msg =
-          typeof body.error === "string" ? body.error : `Request failed (${res.status})`;
-        setError(msg);
+        // Preserve backend validation text (e.g. "invalid email or password").
+        setError(await parseApiError(res));
         return;
       }
 
-      onAuthenticated(body as unknown as AuthUser);
+      const body = (await res.json().catch(() => null)) as AuthUser | null;
+      if (body === null) {
+        setError("Unexpected response from the server.");
+        return;
+      }
+
+      onAuthenticated(body);
     } catch {
       setError("Network error");
     } finally {
@@ -218,30 +214,37 @@ function HomePage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () => vo
   // Returning-user "resume your work" data. recentRuns stays null until the
   // owned run list loads so first-time onboarding is not shown prematurely.
   const [recentRuns, setRecentRuns] = useState<RunListResponse | null>(null);
+  const [recentRunsError, setRecentRunsError] = useState<string | null>(null);
   const [showAllScans, setShowAllScans] = useState(false);
   const [savedSearchCount, setSavedSearchCount] = useState<number | null>(null);
   const [applicationCount, setApplicationCount] = useState<number | null>(null);
 
+  // Recent-scans loader. A load failure must not silently remove the resume
+  // surface: it sets a retryable error while leaving the Start scan form fully
+  // usable. First-time onboarding still keys off recentRuns === [] once loaded.
+  const loadRecentScans = useCallback(async () => {
+    setRecentRunsError(null);
+    try {
+      const res = await fetch("/api/runs");
+      if (res.status === 401) {
+        onLoggedOut();
+        return;
+      }
+      if (!res.ok) {
+        setRecentRunsError(await parseApiError(res, "Could not load your recent scans."));
+        return;
+      }
+      setRecentRuns((await res.json()) as RunListResponse);
+    } catch {
+      setRecentRunsError("Could not load your recent scans.");
+    }
+  }, [onLoggedOut]);
+
   // Load the owned run list plus compact saved-search / application summaries.
   // These are additive resume-work surfaces built on existing read endpoints;
-  // failures degrade quietly rather than blocking the scan form.
+  // the count summaries degrade quietly, but recent-scans failures are surfaced.
   useEffect(() => {
     let cancelled = false;
-
-    async function loadResumeWork() {
-      try {
-        const res = await fetch("/api/runs");
-        if (res.status === 401) {
-          if (!cancelled) onLoggedOut();
-          return;
-        }
-        if (res.ok && !cancelled) {
-          setRecentRuns((await res.json()) as RunListResponse);
-        }
-      } catch {
-        /* leave recentRuns null; the scan form still works */
-      }
-    }
 
     async function loadSavedSearchCount() {
       try {
@@ -265,14 +268,14 @@ function HomePage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () => vo
       }
     }
 
-    void loadResumeWork();
+    void loadRecentScans();
     void loadSavedSearchCount();
     void loadApplicationCount();
 
     return () => {
       cancelled = true;
     };
-  }, [onLoggedOut]);
+  }, [loadRecentScans]);
 
   useEffect(() => {
     let cancelled = false;
@@ -340,15 +343,13 @@ function HomePage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () => vo
         return;
       }
 
-      const data: unknown = await res.json().catch(() => null);
-      const body = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
-
       if (!res.ok) {
-        const msg =
-          typeof body.error === "string" ? body.error : `Request failed (${res.status})`;
-        setSubmitError(msg);
+        setSubmitError(await parseApiError(res));
         return;
       }
+
+      const data: unknown = await res.json().catch(() => null);
+      const body = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
 
       const runId = body.runId;
       if (typeof runId !== "string" || runId.length === 0) {
@@ -373,6 +374,15 @@ function HomePage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () => vo
           Surveyor’s API is unavailable right now ({health.message}). Scans cannot start until it
           reconnects.
         </p>
+      )}
+
+      {recentRunsError != null && (
+        <InlineError
+          message={recentRunsError}
+          onRetry={() => {
+            void loadRecentScans();
+          }}
+        />
       )}
 
       {recentRuns !== null && recentRuns.length > 0 && (
@@ -540,11 +550,16 @@ function JobFitAnalysis({
   profileHref: string;
 }) {
   const [analyses, setAnalyses] = useState<FitAnalysisResponse[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
 
   async function loadAnalyses() {
+    setHistoryLoading(true);
+    setHistoryError(null);
     try {
       const res = await fetch(`/api/jobs/${encodeURIComponent(jobRowId)}/fit-analysis`);
       if (res.status === 401) {
@@ -552,25 +567,31 @@ function JobFitAnalysis({
         return;
       }
       if (!res.ok) {
-        setError(`Request failed (${res.status})`);
+        setHistoryError(
+          await parseApiError(res, `Could not load fit analysis history (${res.status}).`)
+        );
         return;
       }
       setAnalyses((await res.json()) as FitAnalysisResponse[]);
     } catch {
-      setError("Network error");
+      setHistoryError("Network error while loading fit analysis history.");
+    } finally {
+      setHistoryLoading(false);
     }
   }
 
   useEffect(() => {
-    if (expanded && analyses === null) {
+    // Load once on first expand. On failure analyses stays null and this effect
+    // does not re-run (deps unchanged), so the Retry button drives any refetch.
+    if (expanded && analyses === null && !historyLoading && historyError === null) {
       void loadAnalyses();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expanded]);
 
   async function handleAnalyze() {
-    setError(null);
-    setLoading(true);
+    setActionError(null);
+    setGenerating(true);
     try {
       const res = await fetch(`/api/jobs/${encodeURIComponent(jobRowId)}/fit-analysis`, {
         method: "POST",
@@ -579,34 +600,44 @@ function JobFitAnalysis({
         onLoggedOut();
         return;
       }
-      const data: unknown = await res.json().catch(() => null);
-      const body = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
       if (!res.ok) {
-        const msg =
-          typeof body.error === "string" ? body.error : `Request failed (${res.status})`;
-        setError(msg);
+        setActionError(await parseApiError(res));
         return;
       }
       await loadAnalyses();
     } catch {
-      setError("Network error");
+      setActionError("Network error while generating the analysis.");
     } finally {
-      setLoading(false);
+      setGenerating(false);
     }
   }
 
   async function handleDelete(analysisId: string) {
-    const res = await fetch(`/api/fit-analyses/${encodeURIComponent(analysisId)}`, {
-      method: "DELETE",
-    });
-    if (res.status === 401) {
-      onLoggedOut();
-      return;
+    setActionError(null);
+    setDeletingId(analysisId);
+    try {
+      const res = await fetch(`/api/fit-analyses/${encodeURIComponent(analysisId)}`, {
+        method: "DELETE",
+      });
+      if (res.status === 401) {
+        onLoggedOut();
+        return;
+      }
+      if (!res.ok) {
+        // A failed delete must not imply success — surface it, do not reload.
+        setActionError(await parseApiError(res, "Could not delete this analysis."));
+        return;
+      }
+      await loadAnalyses();
+    } catch {
+      setActionError("Network error while deleting this analysis.");
+    } finally {
+      setDeletingId(null);
     }
-    await loadAnalyses();
   }
 
   const latest = analyses && analyses.length > 0 ? analyses[0] : null;
+  const busy = generating || deletingId != null;
 
   return (
     <div>
@@ -622,16 +653,28 @@ function JobFitAnalysis({
             Compare stored job evidence with your profile or resume. Fit analysis does not change the
             scanner result.
           </p>
-          <button type="button" onClick={handleAnalyze} disabled={loading}>
-            {loading ? "Analyzing…" : "Generate new analysis"}
+          <button type="button" onClick={handleAnalyze} disabled={busy}>
+            {generating ? "Analyzing…" : "Generate new analysis"}
           </button>
-          {error != null && <p role="alert">{error}</p>}
+          {actionError != null && <p role="alert">{actionError}</p>}
+
+          {historyLoading && analyses === null && <p>Loading fit analysis…</p>}
+          {historyError != null && (
+            <InlineError
+              message={historyError}
+              onRetry={() => {
+                void loadAnalyses();
+              }}
+            />
+          )}
 
           {latest && (
             <div>
               {latest.status === "FAILED" ? (
                 <p role="alert">
-                  Analysis attempt failed: {latest.failure_reason ?? latest.failure_code ?? "unknown error"}
+                  Analysis attempt failed ({new Date(latest.created_at).toLocaleString()}). Reason:{" "}
+                  {latest.failure_reason ?? "unknown"}
+                  {latest.failure_code != null && ` · Code: ${latest.failure_code}`}
                 </p>
               ) : (
                 <>
@@ -651,19 +694,23 @@ function JobFitAnalysis({
                   <EvidenceItemList items={latest.suggested_next_steps ?? []} />
                 </>
               )}
-              <button type="button" onClick={() => handleDelete(latest.id)}>
-                Delete this analysis
+              <button type="button" onClick={() => handleDelete(latest.id)} disabled={busy}>
+                {deletingId === latest.id ? "Deleting…" : "Delete this analysis"}
               </button>
             </div>
           )}
 
-          {analyses != null && analyses.length === 0 && <p>No fit analysis yet.</p>}
-
-          {error != null && error.toLowerCase().includes("no usable profile or resume") && (
-            <p>
-              <Link to={profileHref}>Add profile or resume information</Link> to enable fit analysis.
-            </p>
+          {analyses != null && analyses.length === 0 && !historyLoading && (
+            <p>No fit analysis yet.</p>
           )}
+
+          {actionError != null &&
+            actionError.toLowerCase().includes("no usable profile or resume") && (
+              <p>
+                <Link to={profileHref}>Add profile or resume information</Link> to enable fit
+                analysis.
+              </p>
+            )}
 
           {analyses != null && analyses.length > 1 && (
             <details>
@@ -672,6 +719,14 @@ function JobFitAnalysis({
                 {analyses.slice(1).map((a) => (
                   <li key={a.id}>
                     {new Date(a.created_at).toLocaleString()} — {a.status}
+                    {a.status === "FAILED" &&
+                      (a.failure_reason != null || a.failure_code != null) && (
+                        <>
+                          {" — Reason: "}
+                          {a.failure_reason ?? "unknown"}
+                          {a.failure_code != null && ` · Code: ${a.failure_code}`}
+                        </>
+                      )}
                   </li>
                 ))}
               </ul>
@@ -695,11 +750,16 @@ function ApplicationPacket({
   onLatestCompletedPacket: (packetId: string | null) => void;
 }) {
   const [packets, setPackets] = useState<ApplicationPacketResponse[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
 
   async function loadPackets() {
+    setHistoryLoading(true);
+    setHistoryError(null);
     try {
       const res = await fetch(`/api/jobs/${encodeURIComponent(jobRowId)}/application-packets`);
       if (res.status === 401) {
@@ -707,17 +767,23 @@ function ApplicationPacket({
         return;
       }
       if (!res.ok) {
-        setError(`Request failed (${res.status})`);
+        setHistoryError(
+          await parseApiError(res, `Could not load application packet history (${res.status}).`)
+        );
         return;
       }
       setPackets((await res.json()) as ApplicationPacketResponse[]);
     } catch {
-      setError("Network error");
+      setHistoryError("Network error while loading application packet history.");
+    } finally {
+      setHistoryLoading(false);
     }
   }
 
   useEffect(() => {
-    if (expanded && packets === null) {
+    // Load once on first expand. On failure packets stays null and this effect
+    // does not re-run (deps unchanged), so the Retry button drives any refetch.
+    if (expanded && packets === null && !historyLoading && historyError === null) {
       void loadPackets();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -738,8 +804,8 @@ function ApplicationPacket({
   }, [packets]);
 
   async function handleGenerate() {
-    setError(null);
-    setLoading(true);
+    setActionError(null);
+    setGenerating(true);
     try {
       const res = await fetch(`/api/jobs/${encodeURIComponent(jobRowId)}/application-packets`, {
         method: "POST",
@@ -748,34 +814,44 @@ function ApplicationPacket({
         onLoggedOut();
         return;
       }
-      const data: unknown = await res.json().catch(() => null);
-      const body = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
       if (!res.ok) {
-        const msg =
-          typeof body.error === "string" ? body.error : `Request failed (${res.status})`;
-        setError(msg);
+        setActionError(await parseApiError(res));
         return;
       }
       await loadPackets();
     } catch {
-      setError("Network error");
+      setActionError("Network error while generating the packet.");
     } finally {
-      setLoading(false);
+      setGenerating(false);
     }
   }
 
   async function handleDelete(packetId: string) {
-    const res = await fetch(`/api/application-packets/${encodeURIComponent(packetId)}`, {
-      method: "DELETE",
-    });
-    if (res.status === 401) {
-      onLoggedOut();
-      return;
+    setActionError(null);
+    setDeletingId(packetId);
+    try {
+      const res = await fetch(`/api/application-packets/${encodeURIComponent(packetId)}`, {
+        method: "DELETE",
+      });
+      if (res.status === 401) {
+        onLoggedOut();
+        return;
+      }
+      if (!res.ok) {
+        // A failed delete must not imply success — surface it, do not reload.
+        setActionError(await parseApiError(res, "Could not delete this packet."));
+        return;
+      }
+      await loadPackets();
+    } catch {
+      setActionError("Network error while deleting this packet.");
+    } finally {
+      setDeletingId(null);
     }
-    await loadPackets();
   }
 
   const latest = packets && packets.length > 0 ? packets[0] : null;
+  const busy = generating || deletingId != null;
 
   return (
     <div>
@@ -788,17 +864,29 @@ function ApplicationPacket({
             Create draft materials from stored job and user evidence. Review everything before use;
             Surveyor never submits applications.
           </p>
-          <button type="button" onClick={handleGenerate} disabled={loading}>
-            {loading ? "Generating…" : "Generate new packet"}
+          <button type="button" onClick={handleGenerate} disabled={busy}>
+            {generating ? "Generating…" : "Generate new packet"}
           </button>
-          {error != null && <p role="alert">{error}</p>}
+          {actionError != null && <p role="alert">{actionError}</p>}
+
+          {historyLoading && packets === null && <p>Loading application packet…</p>}
+          {historyError != null && (
+            <InlineError
+              message={historyError}
+              onRetry={() => {
+                void loadPackets();
+              }}
+            />
+          )}
 
           {latest && (
             <div>
               {latest.status === "FAILED" ? (
                 <p role="alert">
-                  Packet generation attempt failed:{" "}
-                  {latest.failure_reason ?? latest.failure_code ?? "unknown error"}
+                  Packet generation attempt failed (
+                  {new Date(latest.created_at).toLocaleString()}). Reason:{" "}
+                  {latest.failure_reason ?? "unknown"}
+                  {latest.failure_code != null && ` · Code: ${latest.failure_code}`}
                 </p>
               ) : (
                 <>
@@ -829,20 +917,23 @@ function ApplicationPacket({
                   <EvidenceItemList items={latest.questions_to_prepare ?? []} />
                 </>
               )}
-              <button type="button" onClick={() => handleDelete(latest.id)}>
-                Delete this packet
+              <button type="button" onClick={() => handleDelete(latest.id)} disabled={busy}>
+                {deletingId === latest.id ? "Deleting…" : "Delete this packet"}
               </button>
             </div>
           )}
 
-          {packets != null && packets.length === 0 && <p>No application packet yet.</p>}
-
-          {error != null && error.toLowerCase().includes("no usable profile or resume") && (
-            <p>
-              <Link to={profileHref}>Add profile or resume information</Link> to enable application
-              packet generation.
-            </p>
+          {packets != null && packets.length === 0 && !historyLoading && (
+            <p>No application packet yet.</p>
           )}
+
+          {actionError != null &&
+            actionError.toLowerCase().includes("no usable profile or resume") && (
+              <p>
+                <Link to={profileHref}>Add profile or resume information</Link> to enable application
+                packet generation.
+              </p>
+            )}
 
           {packets != null && packets.length > 1 && (
             <details>
@@ -851,6 +942,14 @@ function ApplicationPacket({
                 {packets.slice(1).map((p) => (
                   <li key={p.id}>
                     {new Date(p.created_at).toLocaleString()} — {p.status}
+                    {p.status === "FAILED" &&
+                      (p.failure_reason != null || p.failure_code != null) && (
+                        <>
+                          {" — Reason: "}
+                          {p.failure_reason ?? "unknown"}
+                          {p.failure_code != null && ` · Code: ${p.failure_code}`}
+                        </>
+                      )}
                   </li>
                 ))}
               </ul>
@@ -890,12 +989,12 @@ function StoredJobDescription({
         return;
       }
       if (!res.ok) {
-        setError(`Request failed (${res.status})`);
+        setError(await parseApiError(res, `Could not load the stored job description (${res.status}).`));
         return;
       }
       setDetail((await res.json()) as JobDetailResponse);
     } catch {
-      setError("Network error");
+      setError("Network error while loading the stored job description.");
     } finally {
       setLoading(false);
     }
@@ -915,8 +1014,15 @@ function StoredJobDescription({
       </button>
       {expanded && (
         <div style={{ marginLeft: "1rem", marginTop: "0.5rem" }}>
-          {loading && <p>Loading…</p>}
-          {error != null && <p role="alert">{error}</p>}
+          {loading && <p>Loading stored job description…</p>}
+          {error != null && (
+            <InlineError
+              message={error}
+              onRetry={() => {
+                void load();
+              }}
+            />
+          )}
           {detail != null && (
             <>
               {detail.fetched_at != null && (
@@ -924,6 +1030,10 @@ function StoredJobDescription({
               )}
               {detail.description_text != null && detail.description_text !== "" ? (
                 <p style={{ whiteSpace: "pre-wrap" }}>{detail.description_text}</p>
+              ) : detail.failure_reason != null || detail.failure_code != null ? (
+                <p className="muted">
+                  Stored description unavailable: {detail.failure_reason ?? detail.failure_code}
+                </p>
               ) : (
                 <p className="muted">No stored description text.</p>
               )}
@@ -1058,49 +1168,83 @@ function RunDetailPage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () 
     const runId: string = id;
 
     let cancelled = false;
+    let inFlight = false;
+    let stopped = false;
+    let intervalId: number | undefined;
+
+    function stopPolling() {
+      stopped = true;
+      if (intervalId !== undefined) {
+        window.clearInterval(intervalId);
+        intervalId = undefined;
+      }
+    }
 
     async function poll() {
+      // Prevent overlapping requests: if a poll is still in flight when the
+      // interval fires again, skip this tick.
+      if (inFlight || stopped) {
+        return;
+      }
+      inFlight = true;
       try {
         const res = await fetch(`/api/runs/${encodeURIComponent(runId)}`);
+        if (cancelled) {
+          return;
+        }
 
         if (res.status === 401) {
-          if (!cancelled) {
-            onLoggedOut();
-          }
+          onLoggedOut();
+          stopPolling();
           return;
         }
 
         if (res.status === 404) {
-          if (!cancelled) {
-            setPollError("Run not found");
-          }
+          // Terminal: the run does not exist. Stop polling and explain clearly.
+          setPollError("This run could not be found. It may have been removed.");
+          stopPolling();
           return;
         }
 
         if (!res.ok) {
-          if (!cancelled) {
-            setPollError(`Request failed (${res.status})`);
-          }
+          // Transient failure: keep last-known data visible and keep polling.
+          setPollError(await parseApiError(res, `Could not load this run (${res.status}).`));
           return;
         }
+
         const body = (await res.json()) as RunDetailResponse;
-        if (!cancelled) {
-          setPollError(null);
-          setDetail(body);
+        if (cancelled) {
+          return;
+        }
+        setPollError(null);
+        setDetail(body);
+
+        // Stop polling once the run reaches a terminal status — no further
+        // scanner-visible changes will occur. Status semantics are unchanged.
+        if (
+          body.run.status === RunStatus.COMPLETED ||
+          body.run.status === RunStatus.FAILED_ROLE_SPEC
+        ) {
+          stopPolling();
         }
       } catch {
         if (!cancelled) {
-          setPollError("Network error");
+          // Keep last-known data (if any) and keep polling to recover.
+          setPollError("Network error while loading this run.");
         }
+      } finally {
+        inFlight = false;
       }
     }
 
     void poll();
-    const intervalId = window.setInterval(poll, 1000);
+    intervalId = window.setInterval(() => {
+      void poll();
+    }, 1000);
 
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
+      stopPolling();
     };
   }, [id, onLoggedOut]);
 
@@ -1137,7 +1281,8 @@ function RunDetailPage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () 
         <Link to="/">← Back to scans</Link>
       </p>
       <h1>Run detail</h1>
-      {pollError != null && <p role="alert">{pollError}</p>}
+      {detail == null && pollError == null && <p>Loading run…</p>}
+      {pollError != null && <InlineError message={pollError} />}
       {detail != null && (
         <>
           <p>
@@ -1327,21 +1472,30 @@ function RunDetailPage({ user, onLoggedOut }: { user: AuthUser; onLoggedOut: () 
 export default function App() {
   const [authState, setAuthState] = useState<AuthGateState>({ status: "loading" });
 
-  useEffect(() => {
-    let cancelled = false;
-    fetchCurrentUser()
-      .then((user) => {
-        if (cancelled) return;
-        setAuthState(user ? { status: "authenticated", user } : { status: "unauthenticated" });
-      })
-      .catch(() => {
-        if (cancelled) return;
+  const checkSession = useCallback(async () => {
+    setAuthState({ status: "loading" });
+    try {
+      const res = await fetch("/api/auth/me");
+      if (res.status === 401) {
+        // Genuinely unauthenticated — show login (unchanged 401 behavior).
         setAuthState({ status: "unauthenticated" });
-      });
-    return () => {
-      cancelled = true;
-    };
+        return;
+      }
+      if (!res.ok) {
+        // Non-401 failure: do NOT log the user out. Surface a retryable error.
+        setAuthState({ status: "error" });
+        return;
+      }
+      const user = (await res.json()) as AuthUser;
+      setAuthState({ status: "authenticated", user });
+    } catch {
+      setAuthState({ status: "error" });
+    }
   }, []);
+
+  useEffect(() => {
+    void checkSession();
+  }, [checkSession]);
 
   function handleLoggedOut() {
     setAuthState({ status: "unauthenticated" });
@@ -1355,6 +1509,20 @@ export default function App() {
     return (
       <main>
         <p>Loading…</p>
+      </main>
+    );
+  }
+
+  if (authState.status === "error") {
+    return (
+      <main>
+        <h1>Surveyor</h1>
+        <InlineError
+          message="Surveyor could not verify your session."
+          onRetry={() => {
+            void checkSession();
+          }}
+        />
       </main>
     );
   }

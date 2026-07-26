@@ -82,3 +82,14 @@ body {
 .job-evidence {
   margin: 0.25rem 0;
 }
+
+/* Inline, non-blocking error surface (see InlineError.tsx). Minimal styling
+   for readability only — no toast/overlay behavior. */
+.inline-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+  color: #a11;
+}

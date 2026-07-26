@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
+import InlineError from "./InlineError.js";
 
 export interface AuthUser {
   id: string;
@@ -35,10 +37,26 @@ export default function AppHeader({
   onLoggedOut: () => void;
 }) {
   const { pathname } = useLocation();
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    onLoggedOut();
+    setLogoutError(null);
+    setLoggingOut(true);
+    try {
+      const res = await fetch("/api/auth/logout", { method: "POST" });
+      if (!res.ok) {
+        // Logout failed on the server — keep the user signed in and surface it.
+        setLogoutError("Could not log out. Please try again.");
+        return;
+      }
+      onLoggedOut();
+    } catch {
+      // Network failure — keep the user signed in rather than faking a logout.
+      setLogoutError("Could not log out. Please try again.");
+    } finally {
+      setLoggingOut(false);
+    }
   }
 
   function navLinkClass(area: "scans" | "profile" | "saved" | "applications"): string {
@@ -82,9 +100,17 @@ export default function AppHeader({
       </nav>
       <div className="app-header__account">
         <span>{user.email}</span>
-        <button type="button" onClick={handleLogout}>
-          Log out
+        <button type="button" onClick={handleLogout} disabled={loggingOut}>
+          {loggingOut ? "Logging out…" : "Log out"}
         </button>
+        {logoutError != null && (
+          <InlineError
+            message={logoutError}
+            onRetry={() => {
+              void handleLogout();
+            }}
+          />
+        )}
       </div>
     </header>
   );

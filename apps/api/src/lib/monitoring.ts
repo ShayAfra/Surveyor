@@ -13,6 +13,7 @@ import {
 } from "./runs.js";
 import { getOwnedSavedSearchRow, type SavedSearchRow } from "./savedSearches.js";
 import { computeJobKey } from "./jobIdentity.js";
+import { safeErrorName } from "./safeLog.js";
 
 /** Thrown for monitoring request problems that must not create/update a row. */
 export class MonitoringRequestError extends Error {
@@ -404,6 +405,12 @@ function reconcileOneMonitoringExecution(execution: MonitoringExecutionRow): voi
     | RunStatusRow
     | undefined;
   if (!runRow) {
+    // The linked scanner run is unexpectedly missing (it should have been
+    // inserted atomically with this execution). Log ids only and leave the
+    // execution RUNNING so a later tick can reconcile it if the run reappears.
+    console.warn(
+      `monitoring: linked scanner run ${execution.run_id} for execution ${execution.id} not found; leaving execution RUNNING`
+    );
     return;
   }
 
@@ -469,8 +476,7 @@ export function reconcileActiveMonitoringExecutions(): void {
       reconcileOneMonitoringExecution(execution);
     } catch (err) {
       console.warn(
-        `monitoring: failed to reconcile execution ${execution.id} (run ${execution.run_id}):`,
-        err
+        `monitoring: failed to reconcile execution ${execution.id} (run ${execution.run_id}) (${safeErrorName(err)})`
       );
     }
   }

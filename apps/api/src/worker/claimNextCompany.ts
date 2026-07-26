@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { CompanyStatus, RunStatus } from "@surveyor/shared";
 import { db } from "../db/db.js";
+import { safeErrorName } from "../lib/safeLog.js";
 import { processClaimedCompany } from "./processClaimedCompany.js";
 
 const countCompaniesInProgress = db.prepare(`
@@ -97,8 +98,14 @@ export function tryClaimNextCompany(): void {
   })();
 
   if (claimed) {
+    // Capture safe scanner ids before the async boundary. Never log the raw
+    // error object: it can carry stack traces, URLs, or query values. Log only
+    // allowlisted identifiers plus the generic error name.
+    const { run_id, run_company_id } = claimed;
     void processClaimedCompany(claimed).catch((err) => {
-      console.error("[worker] processClaimedCompany failed", err);
+      console.error(
+        `[worker] processClaimedCompany failed (run ${run_id}, company ${run_company_id}) (${safeErrorName(err)})`
+      );
     });
   }
 }

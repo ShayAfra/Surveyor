@@ -1,8 +1,10 @@
 import {
+  MonitoringRequestError,
   findDueMonitoringSavedSearches,
   reconcileActiveMonitoringExecutions,
   triggerMonitoringExecution,
 } from "../lib/monitoring.js";
+import { safeErrorName } from "../lib/safeLog.js";
 
 /** How often the backend checks for due monitored searches. */
 export const MONITORING_POLL_INTERVAL_MS = Number(
@@ -37,17 +39,34 @@ export function monitoringTick(): void {
     // between those per-execution attempts (e.g. the initial query for
     // active executions), so one bad Phase 1 pass still lets Phase 2
     // due-search processing run on this tick.
-    console.warn("monitoring: Phase 1 reconciliation failed for this tick:", err);
+    console.warn(`monitoring: Phase 1 reconciliation failed for this tick (${safeErrorName(err)})`);
   }
 
-  const dueSearches = findDueMonitoringSavedSearches(MONITORING_FIXED_INTERVAL_MS);
+  // Phase 2: the due-search query failing must not escape the interval
+  // callback. Skip Phase 2 for this tick and let the next tick try again.
+  let dueSearches: ReturnType<typeof findDueMonitoringSavedSearches>;
+  try {
+    dueSearches = findDueMonitoringSavedSearches(MONITORING_FIXED_INTERVAL_MS);
+  } catch (err) {
+    console.warn(`monitoring: due-search query failed for this tick (${safeErrorName(err)})`);
+    return;
+  }
+
   for (const search of dueSearches) {
     try {
       triggerMonitoringExecution(search.user_id, search.id);
-    } catch {
+    } catch (err) {
       // A search can race between the due-selection query and the trigger
-      // call (e.g. run-now started an execution in between); skip and pick
-      // it up again on the next tick rather than throwing out of the loop.
+      // call (e.g. run-now started an execution in between). That surfaces as
+      // a 409 and stays non-noisy. Any other (unexpected) failure is logged
+      // with the saved search id only — never any search content — so later
+      // searches and later ticks keep running.
+      if (err instanceof MonitoringRequestError && err.httpStatus === 409) {
+        continue;
+      }
+      console.warn(
+        `monitoring: unexpected trigger failure for saved search ${search.id} (${safeErrorName(err)})`
+      );
     }
   }
 }

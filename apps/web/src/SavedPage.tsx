@@ -6,6 +6,8 @@ import type {
 } from "@surveyor/shared";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { parseApiError } from "./apiErrors.js";
+import InlineError from "./InlineError.js";
 import SavedSearchMonitoring from "./SavedSearchMonitoring.js";
 import AppHeader, { type AuthUser } from "./AppHeader.js";
 
@@ -71,7 +73,11 @@ export default function SavedPage({ user, onLoggedOut }: SavedPageProps) {
       return;
     }
     if (!companiesRes.ok || !searchesRes.ok) {
-      setState({ status: "error", message: "Request failed" });
+      const failed = !companiesRes.ok ? companiesRes : searchesRes;
+      setState({
+        status: "error",
+        message: await parseApiError(failed, "Could not load your saved companies and searches."),
+      });
       return;
     }
 
@@ -305,7 +311,13 @@ export default function SavedPage({ user, onLoggedOut }: SavedPageProps) {
         return;
       }
 
-      const runId = body.runId as string;
+      // Validate the returned runId before navigating so a malformed response
+      // never sends the user to /runs/undefined.
+      const runId = body.runId;
+      if (typeof runId !== "string" || runId.length === 0) {
+        setRunError("The scan started but returned an invalid response.");
+        return;
+      }
       navigate(`/runs/${runId}`);
     } catch {
       setRunError("Network error");
@@ -324,7 +336,19 @@ export default function SavedPage({ user, onLoggedOut }: SavedPageProps) {
       </p>
 
       {state.status === "loading" && <p>Loading…</p>}
-      {state.status === "error" && <p role="alert">{state.message}</p>}
+      {state.status === "error" && (
+        <InlineError
+          message={state.message}
+          onRetry={() => {
+            void loadSaved().catch((err: unknown) => {
+              setState({
+                status: "error",
+                message: err instanceof Error ? err.message : "Request failed",
+              });
+            });
+          }}
+        />
+      )}
 
       {state.status === "loaded" && (
         <>

@@ -490,6 +490,8 @@ interface LlmOutcome {
   modelName: string | null;
   failureCode: ApplicationPacketFailureCode | null;
   failureReason: string | null;
+  /** Upstream HTTP status when the LLM call returned a non-OK response. Diagnostics only. */
+  upstreamStatus?: number | null;
 }
 
 /** Single LLM boundary for application packet generation: one HTTP call, strict JSON validation, never throws. */
@@ -551,6 +553,7 @@ async function callApplicationPacketLlm(evidence: EvidenceBundle): Promise<LlmOu
       modelName: model,
       failureCode: ApplicationPacketFailureCode.LLM_FAILED,
       failureReason: "application packet LLM call failed",
+      upstreamStatus: res.status,
     };
   }
 
@@ -695,6 +698,16 @@ export async function generateApplicationPacket(
       createdAt
     );
   } else {
+    // Safe diagnostics only: ids/codes/model/upstream status — never evidence,
+    // prompt, cover letter, or model output. The FAILED row is still durable.
+    console.warn("application packet generation failed", {
+      packetId: id,
+      jobRowId,
+      failureCode: outcome.failureCode,
+      model: outcome.modelName,
+      upstreamStatus: outcome.upstreamStatus ?? null,
+    });
+
     db.prepare(
       `INSERT INTO application_packets
         (id, user_id, job_row_id, job_fit_analysis_id, status, packet_summary, cover_letter_draft, positioning_notes_json, resume_bullet_suggestions_json, talking_points_json, questions_to_prepare_json, evidence_snapshot_json, model_name, failure_code, failure_reason, created_at)

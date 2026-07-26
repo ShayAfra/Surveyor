@@ -5,8 +5,9 @@ import type {
   MonitoringMatchListResponse,
   MonitoringRunNowResponse,
 } from "@surveyor/shared";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { parseApiError } from "./apiErrors.js";
 
 interface SavedSearchMonitoringProps {
   savedSearchId: string;
@@ -46,8 +47,9 @@ export default function SavedSearchMonitoring({
   const [actionError, setActionError] = useState<string | null>(null);
   const [lastRunNowRunId, setLastRunNowRunId] = useState<string | null>(null);
 
-  async function load(): Promise<void> {
-    setState({ status: "loading" });
+  // Fetches all three monitoring surfaces at once. Returns the resulting load
+  // state (loaded/error), or null when a 401 was handled by logging out.
+  async function fetchAll(): Promise<LoadState | null> {
     const [configRes, executionsRes, matchesRes] = await Promise.all([
       fetch(`/api/saved-searches/${savedSearchId}/monitoring`),
       fetch(`/api/saved-searches/${savedSearchId}/monitoring/executions`),
@@ -56,17 +58,24 @@ export default function SavedSearchMonitoring({
 
     if (configRes.status === 401 || executionsRes.status === 401 || matchesRes.status === 401) {
       onLoggedOut();
-      return;
+      return null;
     }
     if (!configRes.ok || !executionsRes.ok || !matchesRes.ok) {
-      setState({ status: "error", message: "Failed to load monitoring data" });
-      return;
+      return { status: "error", message: "Failed to load monitoring data" };
     }
 
     const config = (await configRes.json()) as MonitoringConfigResponse;
     const executions = (await executionsRes.json()) as MonitoringExecutionListResponse;
     const matches = (await matchesRes.json()) as MonitoringMatchListResponse;
-    setState({ status: "loaded", config, executions, matches });
+    return { status: "loaded", config, executions, matches };
+  }
+
+  async function load(): Promise<void> {
+    setState({ status: "loading" });
+    const next = await fetchAll();
+    if (next != null) {
+      setState(next);
+    }
   }
 
   function handleExpand() {
@@ -96,7 +105,7 @@ export default function SavedSearchMonitoring({
         return;
       }
       if (!res.ok) {
-        setActionError("Failed to update monitoring");
+        setActionError(await parseApiError(res, "Failed to update monitoring."));
         return;
       }
       await load();
@@ -119,15 +128,22 @@ export default function SavedSearchMonitoring({
         return;
       }
       if (res.status === 409) {
+        // Expected race: an execution is already active. Refresh to show it.
         setActionError("A monitoring run is already active for this saved search.");
         await load();
         return;
       }
       if (!res.ok) {
-        setActionError("Failed to start monitoring run");
+        setActionError(await parseApiError(res, "Failed to start monitoring run."));
         return;
       }
       const data = (await res.json()) as MonitoringRunNowResponse;
+      // Validate the returned runId before offering a "View run" link.
+      if (typeof data.runId !== "string" || data.runId.length === 0) {
+        setActionError("The monitoring run started but returned an invalid response.");
+        await load();
+        return;
+      }
       setLastRunNowRunId(data.runId);
       await load();
     } catch {
@@ -139,6 +155,49 @@ export default function SavedSearchMonitoring({
 
   const hasActiveExecution =
     state.status === "loaded" && state.executions.some((e) => e.status === "RUNNING");
+
+  // Focused active-execution refresh: only while the panel is expanded and an
+  // execution is RUNNING, poll quietly until it reaches a terminal state. There
+  // is no other auto-refresh. Monitoring scheduling is unaffected — this only
+  // re-reads existing monitoring state for display. Effect-local flags keep it
+  // safe: `inFlight` prevents overlapping requests, `cancelled` prevents state
+  // updates after unmount/deps-change, and every path is caught so a rejected
+  // fetch/parse never becomes an unhandled rejection. On any failure the
+  // existing content is preserved (no state change).
+  useEffect(() => {
+    if (!expanded || !hasActiveExecution) {
+      return;
+    }
+    let cancelled = false;
+    let inFlight = false;
+
+    async function quietRefresh(): Promise<void> {
+      if (inFlight || cancelled) {
+        return;
+      }
+      inFlight = true;
+      try {
+        const next = await fetchAll();
+        if (!cancelled && next != null && next.status === "loaded") {
+          setState(next);
+        }
+      } catch {
+        // Preserve existing content; a quiet refresh never surfaces transient errors.
+      } finally {
+        inFlight = false;
+      }
+    }
+
+    const intervalId = window.setInterval(() => {
+      void quietRefresh();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, hasActiveExecution]);
 
   return (
     <div style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
@@ -200,6 +259,11 @@ export default function SavedSearchMonitoring({
                     <Link to={`/runs/${execution.run_id}`}>View run</Link> —{" "}
                     {statusLabel(execution)} —{" "}
                     {new Date(execution.started_at).toLocaleString()}
+                    {execution.status === "FAILED" && (
+                      <div className="muted">
+                        The linked scanner run failed. Open the run above for details.
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>

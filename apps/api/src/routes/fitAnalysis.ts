@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { FitAnalysisListResponse, FitAnalysisResponse } from "@surveyor/shared";
 import { requireAuth, type AuthenticatedRequest } from "../lib/auth.js";
+import { asyncHandler } from "../lib/expressErrors.js";
 import {
   FitAnalysisRequestError,
   deleteFitAnalysis,
@@ -15,7 +16,7 @@ export const fitAnalysisRouter = Router();
 fitAnalysisRouter.post(
   "/api/jobs/:jobRowId/fit-analysis",
   requireAuth,
-  async (req: AuthenticatedRequest, res) => {
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
     const { jobRowId } = req.params;
     const userId = req.userId as string;
 
@@ -26,9 +27,10 @@ fitAnalysisRouter.post(
       if (err instanceof FitAnalysisRequestError) {
         return res.status(err.httpStatus).json({ error: err.message });
       }
+      // Unexpected error: forwarded to jsonErrorHandler (500 JSON) by asyncHandler.
       throw err;
     }
-  }
+  })
 );
 
 fitAnalysisRouter.get(

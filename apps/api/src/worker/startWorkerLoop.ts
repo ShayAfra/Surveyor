@@ -1,6 +1,7 @@
 import { tryClaimNextCompany } from "./claimNextCompany.js";
 import { processRoleSpecInitialization } from "./runRoleSpecInitialization.js";
 import { tryCompleteRunsForReadyOrRunning } from "./tryCompleteRun.js";
+import { safeErrorName } from "../lib/safeLog.js";
 
 const WORKER_INTERVAL_MS = 500;
 
@@ -14,6 +15,23 @@ async function workerTick(): Promise<void> {
   tryClaimNextCompany();
 }
 
+/**
+ * Runs exactly one worker tick and guarantees it never rejects: an unexpected
+ * failure in a single tick is caught and logged with safe metadata only, so it
+ * cannot become an unhandled promise rejection and cannot stop later ticks.
+ * This does not change tick ordering, worker ownership, concurrency, or the
+ * scanner lifecycle — it only prevents one bad tick from taking down the loop.
+ */
+export async function runWorkerTickSafely(): Promise<void> {
+  try {
+    await workerTick();
+  } catch (err) {
+    console.error(`worker: unexpected tick failure (${safeErrorName(err)})`);
+  }
+}
+
 export function startWorkerLoop(): void {
-  setInterval(workerTick, WORKER_INTERVAL_MS);
+  setInterval(() => {
+    void runWorkerTickSafely();
+  }, WORKER_INTERVAL_MS);
 }

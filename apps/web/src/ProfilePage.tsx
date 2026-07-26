@@ -6,6 +6,8 @@ import type {
 import { ProfileItemType } from "@surveyor/shared";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { parseApiError } from "./apiErrors.js";
+import InlineError from "./InlineError.js";
 import AppHeader, { type AuthUser } from "./AppHeader.js";
 
 interface ProfilePageProps {
@@ -74,7 +76,10 @@ export default function ProfilePage({ user, onLoggedOut }: ProfilePageProps) {
       return;
     }
     if (!res.ok) {
-      setState({ status: "error", message: `Request failed (${res.status})` });
+      setState({
+        status: "error",
+        message: await parseApiError(res, `Could not load your profile (${res.status}).`),
+      });
       return;
     }
     const data = (await res.json()) as ProfileMemoryResponse;
@@ -328,7 +333,19 @@ export default function ProfilePage({ user, onLoggedOut }: ProfilePageProps) {
       </p>
 
       {state.status === "loading" && <p>Loading…</p>}
-      {state.status === "error" && <p role="alert">{state.message}</p>}
+      {state.status === "error" && (
+        <InlineError
+          message={state.message}
+          onRetry={() => {
+            void loadProfile().catch((err: unknown) => {
+              setState({
+                status: "error",
+                message: err instanceof Error ? err.message : "Request failed",
+              });
+            });
+          }}
+        />
+      )}
 
       {state.status === "loaded" && (
         <>

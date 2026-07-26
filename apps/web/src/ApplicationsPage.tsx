@@ -2,6 +2,8 @@ import type { ApplicationListResponse, ApplicationResponse } from "@surveyor/sha
 import { ApplicationTrackingStatus } from "@surveyor/shared";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { parseApiError } from "./apiErrors.js";
+import InlineError from "./InlineError.js";
 import AppHeader, { type AuthUser } from "./AppHeader.js";
 
 interface ApplicationsPageProps {
@@ -87,11 +89,8 @@ function ApplicationRow({
         onLoggedOut();
         return;
       }
-      const data: unknown = await res.json().catch(() => null);
-      const body = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
       if (!res.ok) {
-        const msg = typeof body.error === "string" ? body.error : `Request failed (${res.status})`;
-        setError(msg);
+        setError(await parseApiError(res));
         return;
       }
       onChanged();
@@ -104,27 +103,46 @@ function ApplicationRow({
 
   async function handleDetachPacket() {
     setError(null);
-    const res = await fetch(`/api/applications/${encodeURIComponent(application.id)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ application_packet_id: null }),
-    });
-    if (res.status === 401) {
-      onLoggedOut();
-      return;
+    try {
+      const res = await fetch(`/api/applications/${encodeURIComponent(application.id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ application_packet_id: null }),
+      });
+      if (res.status === 401) {
+        onLoggedOut();
+        return;
+      }
+      if (!res.ok) {
+        // Do not imply success on a failed detach.
+        setError(await parseApiError(res, "Could not detach the packet."));
+        return;
+      }
+      onChanged();
+    } catch {
+      setError("Network error while detaching the packet.");
     }
-    onChanged();
   }
 
   async function handleDelete() {
-    const res = await fetch(`/api/applications/${encodeURIComponent(application.id)}`, {
-      method: "DELETE",
-    });
-    if (res.status === 401) {
-      onLoggedOut();
-      return;
+    setError(null);
+    try {
+      const res = await fetch(`/api/applications/${encodeURIComponent(application.id)}`, {
+        method: "DELETE",
+      });
+      if (res.status === 401) {
+        onLoggedOut();
+        return;
+      }
+      if (!res.ok) {
+        // Do not imply success on a failed delete.
+        setError(await parseApiError(res, "Could not delete this application."));
+        return;
+      }
+      onChanged();
+    } catch {
+      setError("Network error while deleting this application.");
     }
-    onChanged();
   }
 
   return (
@@ -227,7 +245,10 @@ export default function ApplicationsPage({ user, onLoggedOut }: ApplicationsPage
       return;
     }
     if (!res.ok) {
-      setState({ status: "error", message: `Request failed (${res.status})` });
+      setState({
+        status: "error",
+        message: await parseApiError(res, `Could not load applications (${res.status}).`),
+      });
       return;
     }
     const applications = (await res.json()) as ApplicationListResponse;
@@ -273,7 +294,19 @@ export default function ApplicationsPage({ user, onLoggedOut }: ApplicationsPage
       </section>
 
       {state.status === "loading" && <p>Loading…</p>}
-      {state.status === "error" && <p role="alert">{state.message}</p>}
+      {state.status === "error" && (
+        <InlineError
+          message={state.message}
+          onRetry={() => {
+            void load().catch((err: unknown) => {
+              setState({
+                status: "error",
+                message: err instanceof Error ? err.message : "Request failed",
+              });
+            });
+          }}
+        />
+      )}
 
       {state.status === "loaded" && (
         <section aria-labelledby="applications-list-heading">

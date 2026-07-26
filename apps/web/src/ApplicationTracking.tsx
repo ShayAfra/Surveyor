@@ -1,6 +1,8 @@
 import type { ApplicationListResponse, ApplicationPacketListResponse } from "@surveyor/shared";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { parseApiError } from "./apiErrors.js";
+import InlineError from "./InlineError.js";
 
 interface ApplicationTrackingProps {
   jobRowId: string;
@@ -20,10 +22,14 @@ export default function ApplicationTracking({
   onLoggedOut,
 }: ApplicationTrackingProps) {
   const [applications, setApplications] = useState<ApplicationListResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function loadApplications() {
+    setLoading(true);
+    setLoadError(null);
     try {
       const res = await fetch(`/api/jobs/${encodeURIComponent(jobRowId)}/applications`);
       if (res.status === 401) {
@@ -31,12 +37,14 @@ export default function ApplicationTracking({
         return;
       }
       if (!res.ok) {
-        setError(`Request failed (${res.status})`);
+        setLoadError(await parseApiError(res, `Could not load tracking (${res.status}).`));
         return;
       }
       setApplications((await res.json()) as ApplicationListResponse);
     } catch {
-      setError("Network error");
+      setLoadError("Network error while loading tracking.");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -105,7 +113,23 @@ export default function ApplicationTracking({
     }
   }
 
+  // Never render invisibly forever: while the initial lookup is in flight show
+  // a loading line, and on failure show a retryable inline error instead of
+  // silently rendering nothing.
   if (applications === null) {
+    if (loading) {
+      return <p className="muted">Loading tracking…</p>;
+    }
+    if (loadError != null) {
+      return (
+        <InlineError
+          message={loadError}
+          onRetry={() => {
+            void loadApplications();
+          }}
+        />
+      );
+    }
     return null;
   }
 

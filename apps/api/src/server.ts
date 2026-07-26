@@ -12,6 +12,7 @@ import { applicationPacketRouter } from "./routes/applicationPacket.js";
 import { savedCompaniesRouter } from "./routes/savedCompanies.js";
 import { savedSearchesRouter } from "./routes/savedSearches.js";
 import { applicationsRouter } from "./routes/applications.js";
+import { jsonErrorHandler } from "./lib/expressErrors.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? "3000");
@@ -30,6 +31,11 @@ app.use(applicationsRouter);
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
+
+// Final error boundary: must be registered after all routes so malformed JSON
+// bodies and unexpected route failures return JSON (not Express HTML) with only
+// safe metadata logged. See jsonErrorHandler for the exact contract.
+app.use(jsonErrorHandler);
 
 // Export app for endpoint tests. listen() is guarded so importing this module
 // in test files does not start the worker loop or bind a port.
