@@ -25,6 +25,7 @@ import ProfilePage from "./ProfilePage.js";
 import SavedPage from "./SavedPage.js";
 import ApplicationsPage from "./ApplicationsPage.js";
 import ApplicationTracking from "./ApplicationTracking.js";
+import SettingsPage from "./SettingsPage.js";
 import AppHeader, { type AuthUser } from "./AppHeader.js";
 
 type HealthState =
@@ -613,6 +614,14 @@ function JobFitAnalysis({
   }
 
   async function handleDelete(analysisId: string) {
+    if (
+      !window.confirm(
+        "Delete this analysis? This deletes this analysis and its stored evidence snapshot. " +
+          "It does not delete generated application packets, and it does not delete scanner or job evidence."
+      )
+    ) {
+      return;
+    }
     setActionError(null);
     setDeletingId(analysisId);
     try {
@@ -650,8 +659,13 @@ function JobFitAnalysis({
       {expanded && (
         <div style={{ marginLeft: "1rem", marginTop: "0.5rem" }}>
           <p className="muted">
-            Compare stored job evidence with your profile or resume. Fit analysis does not change the
-            scanner result.
+            Generating a fit analysis sends the stored job evidence plus your current profile or
+            resume evidence to the configured AI provider. Fit analysis does not change the scanner
+            result.
+          </p>
+          <p className="muted">
+            Each generated analysis stores a point-in-time snapshot of the evidence used. Editing or
+            deleting your current profile or resume does not change analyses you already generated.
           </p>
           <button type="button" onClick={handleAnalyze} disabled={busy}>
             {generating ? "Analyzing…" : "Generate new analysis"}
@@ -694,7 +708,11 @@ function JobFitAnalysis({
                   <EvidenceItemList items={latest.suggested_next_steps ?? []} />
                 </>
               )}
-              <button type="button" onClick={() => handleDelete(latest.id)} disabled={busy}>
+              <button
+                type="button"
+                onClick={() => handleDelete(latest.id)}
+                disabled={generating || deletingId === latest.id}
+              >
                 {deletingId === latest.id ? "Deleting…" : "Delete this analysis"}
               </button>
             </div>
@@ -726,7 +744,14 @@ function JobFitAnalysis({
                           {a.failure_reason ?? "unknown"}
                           {a.failure_code != null && ` · Code: ${a.failure_code}`}
                         </>
-                      )}
+                      )}{" "}
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(a.id)}
+                      disabled={generating || deletingId === a.id}
+                    >
+                      {deletingId === a.id ? "Deleting…" : "Delete"}
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -827,6 +852,14 @@ function ApplicationPacket({
   }
 
   async function handleDelete(packetId: string) {
+    if (
+      !window.confirm(
+        "Delete this packet? This deletes this packet and its stored evidence snapshot. " +
+          "Any linked application remains but is unlinked from this packet, and scanner or job evidence is not deleted."
+      )
+    ) {
+      return;
+    }
     setActionError(null);
     setDeletingId(packetId);
     try {
@@ -861,8 +894,13 @@ function ApplicationPacket({
       {expanded && (
         <div style={{ marginLeft: "1rem", marginTop: "0.5rem" }}>
           <p className="muted">
-            Create draft materials from stored job and user evidence. Review everything before use;
-            Surveyor never submits applications.
+            Generating a packet may send your current profile or resume evidence, the stored job
+            evidence, and optionally your latest fit-analysis evidence to the configured AI provider.
+            Review everything before use; Surveyor never submits applications.
+          </p>
+          <p className="muted">
+            Each generated packet stores a point-in-time snapshot of the evidence used. Editing or
+            deleting your current profile or resume does not change packets you already generated.
           </p>
           <button type="button" onClick={handleGenerate} disabled={busy}>
             {generating ? "Generating…" : "Generate new packet"}
@@ -917,7 +955,11 @@ function ApplicationPacket({
                   <EvidenceItemList items={latest.questions_to_prepare ?? []} />
                 </>
               )}
-              <button type="button" onClick={() => handleDelete(latest.id)} disabled={busy}>
+              <button
+                type="button"
+                onClick={() => handleDelete(latest.id)}
+                disabled={generating || deletingId === latest.id}
+              >
                 {deletingId === latest.id ? "Deleting…" : "Delete this packet"}
               </button>
             </div>
@@ -949,7 +991,14 @@ function ApplicationPacket({
                           {p.failure_reason ?? "unknown"}
                           {p.failure_code != null && ` · Code: ${p.failure_code}`}
                         </>
-                      )}
+                      )}{" "}
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(p.id)}
+                      disabled={generating || deletingId === p.id}
+                    >
+                      {deletingId === p.id ? "Deleting…" : "Delete"}
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -1552,6 +1601,10 @@ export default function App() {
       <Route
         path="/applications"
         element={<ApplicationsPage user={authState.user} onLoggedOut={handleLoggedOut} />}
+      />
+      <Route
+        path="/settings"
+        element={<SettingsPage user={authState.user} onLoggedOut={handleLoggedOut} />}
       />
     </Routes>
   );

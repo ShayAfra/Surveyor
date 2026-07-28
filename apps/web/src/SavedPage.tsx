@@ -164,7 +164,12 @@ export default function SavedPage({ user, onLoggedOut }: SavedPageProps) {
   }
 
   async function handleDeleteCompany(companyId: string) {
-    if (!window.confirm("Delete this saved company?")) {
+    if (
+      !window.confirm(
+        "Delete this saved company? This deletes the saved company shortlist record. " +
+          "Saved searches keep any company names they already copied, and your past scanner runs and applications are not deleted."
+      )
+    ) {
       return;
     }
     try {
@@ -270,7 +275,12 @@ export default function SavedPage({ user, onLoggedOut }: SavedPageProps) {
   }
 
   async function handleDeleteSearch(searchId: string) {
-    if (!window.confirm("Delete this saved search?")) {
+    if (
+      !window.confirm(
+        "Delete this saved search? This deletes the saved search along with its monitoring history and known matches. " +
+          "It does not delete past scanner runs created from it, and it does not delete your applications."
+      )
+    ) {
       return;
     }
     try {

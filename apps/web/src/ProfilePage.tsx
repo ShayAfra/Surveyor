@@ -149,7 +149,13 @@ export default function ProfilePage({ user, onLoggedOut }: ProfilePageProps) {
   }
 
   async function handleProfileDelete() {
-    if (!window.confirm("Clear your profile fields and all profile items? This cannot be undone.")) {
+    if (
+      !window.confirm(
+        "Delete your current profile fields and all profile items? This cannot be undone. " +
+          "It does not delete your resume, and it does not delete historical fit analyses or " +
+          "application packets — delete those separately from the matched job in your scan history."
+      )
+    ) {
       return;
     }
     setProfileError(null);
@@ -160,7 +166,7 @@ export default function ProfilePage({ user, onLoggedOut }: ProfilePageProps) {
         return;
       }
       if (!res.ok) {
-        setProfileError("Failed to clear profile");
+        setProfileError("Failed to delete profile");
         return;
       }
       await loadProfile();
@@ -298,7 +304,13 @@ export default function ProfilePage({ user, onLoggedOut }: ProfilePageProps) {
   }
 
   async function handleResumeClear() {
-    if (!window.confirm("Clear your saved resume text? This cannot be undone.")) {
+    if (
+      !window.confirm(
+        "Delete your current resume text? This cannot be undone. It does not delete your profile, " +
+          "and it does not delete historical fit analyses or application packets — those keep their " +
+          "own evidence snapshots unless you delete them separately from the matched job in your scan history."
+      )
+    ) {
       return;
     }
     setResumeError(null);
@@ -309,7 +321,7 @@ export default function ProfilePage({ user, onLoggedOut }: ProfilePageProps) {
         return;
       }
       if (!res.ok) {
-        setResumeError("Failed to clear resume");
+        setResumeError("Failed to delete resume");
         return;
       }
       await loadProfile();
@@ -329,7 +341,16 @@ export default function ProfilePage({ user, onLoggedOut }: ProfilePageProps) {
       )}
       <p className="muted">
         Your profile and resume give fit analysis and application packets something to compare
-        stored job evidence against. Nothing here is shared or submitted anywhere.
+        stored job evidence against. This evidence is stored in Surveyor’s database and scoped to
+        your account. When you generate a fit analysis or application packet, your current profile or
+        resume evidence may be sent to the configured AI provider. Surveyor never submits
+        applications.
+      </p>
+      <p className="muted">
+        Deleting your current profile or resume data does not delete fit analyses or application
+        packets you already generated — each of those stores its own point-in-time evidence
+        snapshot. Delete those from the matched job in your scan history if you no longer want them
+        stored.
       </p>
 
       {state.status === "loading" && <p>Loading…</p>}
@@ -415,9 +436,9 @@ export default function ProfilePage({ user, onLoggedOut }: ProfilePageProps) {
               <button
                 type="button"
                 onClick={handleProfileDelete}
-                disabled={state.data.profile === null}
+                disabled={state.data.profile === null && state.data.items.length === 0}
               >
-                Clear profile
+                Delete profile
               </button>
             </form>
           </section>
@@ -536,7 +557,7 @@ export default function ProfilePage({ user, onLoggedOut }: ProfilePageProps) {
                 onClick={handleResumeClear}
                 disabled={state.data.resume === null}
               >
-                Clear resume
+                Delete resume
               </button>
             </form>
           </section>

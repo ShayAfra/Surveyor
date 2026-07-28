@@ -8,8 +8,10 @@ export interface AuthUser {
   created_at: number;
 }
 
+type NavArea = "scans" | "profile" | "saved" | "applications" | "settings";
+
 /** True when the current path belongs to the given nav area. */
-function isActiveArea(pathname: string, area: "scans" | "profile" | "saved" | "applications"): boolean {
+function isActiveArea(pathname: string, area: NavArea): boolean {
   switch (area) {
     case "scans":
       // The Scans area covers the home/start-a-scan page and every run detail.
@@ -20,14 +22,16 @@ function isActiveArea(pathname: string, area: "scans" | "profile" | "saved" | "a
       return pathname.startsWith("/saved");
     case "applications":
       return pathname.startsWith("/applications");
+    case "settings":
+      return pathname.startsWith("/settings");
   }
 }
 
 /**
  * Shared authenticated header used by every signed-in page. Gives consistent
- * access to the main areas (Scans, Profile, Saved & monitoring, Applications),
- * highlights the active area, shows the current user, and offers log out — so
- * no authenticated route is a dead end.
+ * access to the main areas (Scans, Profile, Saved & monitoring, Applications,
+ * Settings), highlights the active area, shows the current user, and offers log
+ * out — so no authenticated route is a dead end.
  */
 export default function AppHeader({
   user,
@@ -59,7 +63,7 @@ export default function AppHeader({
     }
   }
 
-  function navLinkClass(area: "scans" | "profile" | "saved" | "applications"): string {
+  function navLinkClass(area: NavArea): string {
     return isActiveArea(pathname, area) ? "app-header__nav-link is-active" : "app-header__nav-link";
   }
 
@@ -96,6 +100,13 @@ export default function AppHeader({
           aria-current={isActiveArea(pathname, "applications") ? "page" : undefined}
         >
           Applications
+        </Link>
+        <Link
+          to="/settings"
+          className={navLinkClass("settings")}
+          aria-current={isActiveArea(pathname, "settings") ? "page" : undefined}
+        >
+          Settings
         </Link>
       </nav>
       <div className="app-header__account">

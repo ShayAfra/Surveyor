@@ -102,6 +102,14 @@ function ApplicationRow({
   }
 
   async function handleDetachPacket() {
+    if (
+      !window.confirm(
+        "Detach this packet from the application? This removes only the link between the application and the packet. " +
+          "The packet remains stored, and the application remains."
+      )
+    ) {
+      return;
+    }
     setError(null);
     try {
       const res = await fetch(`/api/applications/${encodeURIComponent(application.id)}`, {
@@ -125,6 +133,14 @@ function ApplicationRow({
   }
 
   async function handleDelete() {
+    if (
+      !window.confirm(
+        "Delete this application? This deletes only the application tracking record. " +
+          "It does not delete the scanner run or job evidence, and it does not delete the generated packet."
+      )
+    ) {
+      return;
+    }
     setError(null);
     try {
       const res = await fetch(`/api/applications/${encodeURIComponent(application.id)}`, {
